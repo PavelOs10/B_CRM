@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Send, CheckCircle2, X, Calendar, Users, TrendingUp, Star, BarChart3, ClipboardCheck, Target, MessageSquare, Award } from 'lucide-react';
+const { useState, useEffect } = React;
+const { Plus, Send, CheckCircle2, X, Calendar, Users, TrendingUp, Star, BarChart3, ClipboardCheck, Target, MessageSquare, Award } = window.lucideReact;
 
-const API_URL = 'http://localhost:8000';
+const API_URL = 'http://166.1.201.124:8000';
 
 const TABS = [
   { id: 'morning', name: 'Утренние мероприятия', icon: Calendar },
@@ -1491,4 +1491,6 @@ const BranchSummaryTab = ({ branch, setStatus }) => {
   );
 };
 
-export default App;
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
