@@ -13,22 +13,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-      
-      - name: Login to Docker Hub (опционально)
-        if: ${{ secrets.DOCKER_USERNAME != '' }}
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-      
-      - name: Create .env file
-        run: |
-          echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" > .env
-          echo "GOOGLE_SHEET_ID=${{ secrets.GOOGLE_SHEET_ID }}" >> .env
-          echo "GOOGLE_SERVICE_ACCOUNT_JSON='${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}'" >> .env
-      
       - name: Deploy to server via SSH
         uses: appleboy/ssh-action@master
         with:
@@ -36,24 +20,27 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            cd /opt/barber-crm || mkdir -p /opt/barber-crm && cd /opt/barber-crm
+            # Перейти в директорию или создать её
+            cd /opt/barber-crm || (mkdir -p /opt/barber-crm && cd /opt/barber-crm)
             
-            # Остановить контейнеры
-            docker-compose down || true
+            # Остановить контейнеры если они запущены
+            docker-compose down 2>/dev/null || true
             
             # Удалить старые файлы
             rm -rf *
             
-            # Склонировать репозиторий
+            # Склонировать свежий код
             git clone https://github.com/${{ github.repository }} .
             
-            # Создать .env
-            echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" > .env
-            echo "GOOGLE_SHEET_ID=${{ secrets.GOOGLE_SHEET_ID }}" >> .env
-            echo "GOOGLE_SERVICE_ACCOUNT_JSON='${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}'" >> .env
+            # Создать .env файл с секретами
+            cat > .env << 'EOF'
+            JWT_SECRET=${{ secrets.JWT_SECRET }}
+            GOOGLE_SHEET_ID=${{ secrets.GOOGLE_SHEET_ID }}
+            GOOGLE_SERVICE_ACCOUNT_JSON='${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}'
+            EOF
             
             # Запустить контейнеры
             docker-compose up -d --build
             
             # Очистить неиспользуемые образы
-            docker system prune -af
+            docker system prune -af --volumes
