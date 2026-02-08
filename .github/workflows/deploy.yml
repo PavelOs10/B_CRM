@@ -21,27 +21,35 @@ jobs:
           password: ${{ secrets.SSH_PASSWORD }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Перейти в директорию или создать её
-            cd /opt/barber-crm || (mkdir -p /opt/barber-crm && cd /opt/barber-crm)
+            # Создаём папку если её нет
+            mkdir -p /opt/barber-crm-app
+            cd /opt/barber-crm-app
             
-            # Остановить контейнеры если они запущены
+            # Останавливаем контейнеры
             docker-compose down 2>/dev/null || true
             
-            # Удалить старые файлы
-            rm -rf *
+            # Если Git репозиторий уже есть - обновляем
+            if [ -d .git ]; then
+              git fetch --all
+              git reset --hard origin/main
+              git pull origin main
+            else
+              # Если нет - клонируем
+              cd ..
+              rm -rf barber-crm-app
+              git clone https://github.com/${{ github.repository }} barber-crm-app
+              cd barber-crm-app
+            fi
             
-            # Склонировать свежий код
-            git clone https://github.com/${{ github.repository }} .
-            
-            # Создать .env файл с секретами
+            # Создаём .env
             cat > .env << 'EOF'
             JWT_SECRET=${{ secrets.JWT_SECRET }}
             GOOGLE_SHEET_ID=${{ secrets.GOOGLE_SHEET_ID }}
             GOOGLE_SERVICE_ACCOUNT_JSON='${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}'
             EOF
             
-            # Запустить контейнеры
+            # Запускаем контейнеры
             docker-compose up -d --build
             
-            # Очистить неиспользуемые образы
+            # Очищаем старые образы
             docker system prune -af --volumes
