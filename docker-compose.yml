@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: barber_backend
+    restart: always
+    environment:
+      JWT_SECRET: ${JWT_SECRET}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${GOOGLE_SERVICE_ACCOUNT_JSON}
+      GOOGLE_SHEET_ID: ${GOOGLE_SHEET_ID}
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build: ./frontend
+    container_name: barber_frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
