@@ -18,20 +18,14 @@ jobs:
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
-          password: ${{ secrets.SSH_PASSWORD }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             # Переход в директорию
             mkdir -p /opt/barber-crm-app
             cd /opt/barber-crm-app
             
-            # Жёсткая остановка Docker и очистка
-            sudo pkill -9 dockerd 2>/dev/null || true
-            sudo pkill -9 containerd 2>/dev/null || true
-            sudo systemctl restart docker
-            sleep 5
-            
-            # Удаление всех контейнеров принудительно
-            sudo docker rm -f $(sudo docker ps -aq) 2>/dev/null || true
+            # Остановка контейнеров
+            docker compose down || true
             
             # Обновление кода
             if [ -d .git ]; then
@@ -45,16 +39,20 @@ jobs:
               cd barber-crm-app
             fi
             
-            # Создание .env
+            # Создание .env файла
             cat > .env << 'ENVEOF'
-            JWT_SECRET=${{ secrets.JWT_SECRET }}
             GOOGLE_SHEET_ID=${{ secrets.GOOGLE_SHEET_ID }}
             GOOGLE_SERVICE_ACCOUNT_JSON=${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
             ENVEOF
             
-            # Запуск контейнеров
-            sudo docker compose build --no-cache
-            sudo docker compose up -d --force-recreate
+            # Сборка и запуск
+            docker compose build --no-cache
+            docker compose up -d
             
-            # Очистка
-            sudo docker system prune -af
+            # Проверка статуса
+            sleep 10
+            docker compose ps
+            docker compose logs --tail=50
+            
+            # Очистка старых образов
+            docker image prune -af
