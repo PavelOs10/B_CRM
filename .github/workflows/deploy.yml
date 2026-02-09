@@ -18,14 +18,14 @@ jobs:
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          password: ${{ secrets.SSH_PASSWORD }}
           script: |
             # Переход в директорию
             mkdir -p /opt/barber-crm-app
             cd /opt/barber-crm-app
             
             # Остановка контейнеров
-            docker compose down || true
+            docker compose down 2>/dev/null || true
             
             # Обновление кода
             if [ -d .git ]; then
@@ -49,10 +49,19 @@ jobs:
             docker compose build --no-cache
             docker compose up -d
             
+            # Ждём запуска
+            echo "Ожидание запуска сервисов..."
+            sleep 15
+            
             # Проверка статуса
-            sleep 10
+            echo "=== Статус контейнеров ==="
             docker compose ps
-            docker compose logs --tail=50
+            
+            echo "=== Логи backend ==="
+            docker compose logs backend --tail=30
+            
+            echo "=== Логи frontend ==="
+            docker compose logs frontend --tail=10
             
             # Очистка старых образов
-            docker image prune -af
+            docker image prune -af --filter "until=24h"
