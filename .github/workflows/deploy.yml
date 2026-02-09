@@ -19,20 +19,21 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SSH_PASSWORD }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            ...
-            # Переход в директорию проекта
+            # Переход в директорию
+            mkdir -p /opt/barber-crm-app
             cd /opt/barber-crm-app
             
-            # Запуск Docker если упал
-            systemctl start docker 2>/dev/null || true
-            sleep 2
+            # Жёсткая остановка Docker и очистка
+            sudo pkill -9 dockerd 2>/dev/null || true
+            sudo pkill -9 containerd 2>/dev/null || true
+            sudo systemctl restart docker
+            sleep 5
             
-            # Остановка контейнеров
-            docker compose down --remove-orphans 2>/dev/null || true
+            # Удаление всех контейнеров принудительно
+            sudo docker rm -f $(sudo docker ps -aq) 2>/dev/null || true
             
-            # Обновление кода из GitHub
+            # Обновление кода
             if [ -d .git ]; then
               git fetch --all
               git reset --hard origin/main
@@ -44,14 +45,16 @@ jobs:
               cd barber-crm-app
             fi
             
-            # Создание .env файла
-            echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" > .env
-            echo "GOOGLE_SHEET_ID=${{ secrets.GOOGLE_SHEET_ID }}" >> .env
-            echo 'GOOGLE_SERVICE_ACCOUNT_JSON=${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' >> .env
+            # Создание .env
+            cat > .env << 'ENVEOF'
+            JWT_SECRET=${{ secrets.JWT_SECRET }}
+            GOOGLE_SHEET_ID=${{ secrets.GOOGLE_SHEET_ID }}
+            GOOGLE_SERVICE_ACCOUNT_JSON=${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+            ENVEOF
             
-            # Сборка и запуск
-            docker compose build --no-cache
-            docker compose up -d --force-recreate
+            # Запуск контейнеров
+            sudo docker compose build --no-cache
+            sudo docker compose up -d --force-recreate
             
             # Очистка
-            docker image prune -af
+            sudo docker system prune -af
