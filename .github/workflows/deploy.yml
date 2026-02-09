@@ -21,38 +21,37 @@ jobs:
           password: ${{ secrets.SSH_PASSWORD }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Создаём папку если её нет
-            mkdir -p /opt/barber-crm-app
+            ...
+            # Переход в директорию проекта
             cd /opt/barber-crm-app
             
-            # ФОРСИРОВАННАЯ остановка и очистка
-            docker-compose kill 2>/dev/null || true
-            docker-compose rm -f 2>/dev/null || true
-            docker network prune -f 2>/dev/null || true
+            # Запуск Docker если упал
+            systemctl start docker 2>/dev/null || true
+            sleep 2
             
-            # Если Git репозиторий уже есть - обновляем
+            # Остановка контейнеров
+            docker compose down --remove-orphans 2>/dev/null || true
+            
+            # Обновление кода из GitHub
             if [ -d .git ]; then
               git fetch --all
               git reset --hard origin/main
               git pull origin main
             else
-              # Если нет - клонируем
               cd ..
               rm -rf barber-crm-app
               git clone https://github.com/${{ github.repository }} barber-crm-app
               cd barber-crm-app
             fi
             
-            # Создаём .env с правильным экранированием
+            # Создание .env файла
             echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" > .env
             echo "GOOGLE_SHEET_ID=${{ secrets.GOOGLE_SHEET_ID }}" >> .env
             echo 'GOOGLE_SERVICE_ACCOUNT_JSON=${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' >> .env
             
-            # Пересобираем БЕЗ кеша
-            docker-compose build --no-cache
+            # Сборка и запуск
+            docker compose build --no-cache
+            docker compose up -d --force-recreate
             
-            # Запускаем с форсированным пересозданием
-            docker-compose up -d --force-recreate
-            
-            # Очищаем старые образы и volumes
-            docker system prune -af --volumes
+            # Очистка
+            docker image prune -af
