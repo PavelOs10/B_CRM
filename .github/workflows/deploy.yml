@@ -20,48 +20,157 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SSH_PASSWORD }}
           script: |
+            set -e
+            
+            echo "=========================================="
+            echo "BarberCRM Deployment Started"
+            echo "=========================================="
+            
             # Переход в директорию
             mkdir -p /opt/barber-crm-app
             cd /opt/barber-crm-app
             
-            # Остановка контейнеров
-            docker compose down 2>/dev/null || true
+            # ЖЕСТКАЯ ОСТАНОВКА КОНТЕЙНЕРОВ (обход permission denied)
+            echo ""
+            echo "=== Остановка старых контейнеров ==="
+            
+            # Функция для безопасной остановки контейнера
+            stop_container() {
+                local container_name=$1
+                echo "Останавливаем $container_name..."
+                
+                # Проверяем существует ли контейнер
+                if docker ps -a --format '{{.Names}}' | grep -q "^${container_name}$"; then
+                    # Получаем PID процесса контейнера
+                    CONTAINER_PID=$(docker inspect $container_name --format '{{.State.Pid}}' 2>/dev/null || echo "")
+                    
+                    if [ ! -z "$CONTAINER_PID" ] && [ "$CONTAINER_PID" != "0" ]; then
+                        echo "  → PID: $CONTAINER_PID"
+                        # Убиваем процесс напрямую
+                        kill -9 $CONTAINER_PID 2>/dev/null || true
+                        sleep 1
+                    fi
+                    
+                    # Удаляем контейнер принудительно
+                    docker rm -f $container_name 2>/dev/null || true
+                    echo "  → $container_name удален"
+                else
+                    echo "  → $container_name не найден (OK)"
+                fi
+            }
+            
+            # Останавливаем наши контейнеры
+            stop_container "barber_backend"
+            stop_container "barber_frontend"
+            
+            # Удаляем сеть если существует
+            echo ""
+            echo "=== Очистка сети ==="
+            docker network rm barber_network 2>/dev/null || echo "  → Сеть не найдена (OK)"
+            
+            # Пауза для завершения процессов
+            sleep 2
             
             # Обновление кода
+            echo ""
+            echo "=== Обновление кода ==="
             if [ -d .git ]; then
               git fetch --all
               git reset --hard origin/main
               git pull origin main
+              echo "  → Код обновлен"
             else
               cd ..
               rm -rf barber-crm-app
               git clone https://github.com/${{ github.repository }} barber-crm-app
               cd barber-crm-app
+              echo "  → Репозиторий склонирован"
             fi
             
             # Создание .env файла
+            echo ""
+            echo "=== Создание .env ==="
             cat > .env << 'ENVEOF'
             GOOGLE_SHEET_ID=${{ secrets.GOOGLE_SHEET_ID }}
             GOOGLE_SERVICE_ACCOUNT_JSON=${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
             ENVEOF
+            echo "  → .env создан"
             
-            # Сборка и запуск
+            # Удаляем старые образы наших контейнеров
+            echo ""
+            echo "=== Очистка старых образов ==="
+            docker rmi barber-crm-app-backend 2>/dev/null || echo "  → backend образ не найден"
+            docker rmi barber-crm-app-frontend 2>/dev/null || echo "  → frontend образ не найден"
+            
+            # Сборка новых образов
+            echo ""
+            echo "=== Сборка образов ==="
             docker compose build --no-cache
+            
+            # Запуск контейнеров
+            echo ""
+            echo "=== Запуск контейнеров ==="
             docker compose up -d
             
             # Ждём запуска
-            echo "Ожидание запуска сервисов..."
+            echo ""
+            echo "Ожидание запуска сервисов (15 секунд)..."
             sleep 15
             
             # Проверка статуса
-            echo "=== Статус контейнеров ==="
+            echo ""
+            echo "=========================================="
+            echo "Статус контейнеров:"
+            echo "=========================================="
             docker compose ps
             
-            echo "=== Логи backend ==="
-            docker compose logs backend --tail=30
+            # Логи backend
+            echo ""
+            echo "=========================================="
+            echo "Логи Backend (последние 20 строк):"
+            echo "=========================================="
+            docker compose logs backend --tail=20
             
-            echo "=== Логи frontend ==="
+            # Логи frontend
+            echo ""
+            echo "=========================================="
+            echo "Логи Frontend (последние 10 строк):"
+            echo "=========================================="
             docker compose logs frontend --tail=10
             
-            # Очистка старых образов
-            docker image prune -af --filter "until=24h"
+            # Health check
+            echo ""
+            echo "=========================================="
+            echo "Health Check:"
+            echo "=========================================="
+            sleep 3
+            
+            if curl -f http://localhost:8000/health 2>/dev/null; then
+                echo "✓ Backend API работает!"
+            else
+                echo "⚠ Backend API не отвечает (может еще запускаться)"
+            fi
+            
+            if curl -f http://localhost/ 2>/dev/null >/dev/null; then
+                echo "✓ Frontend работает!"
+            else
+                echo "⚠ Frontend не отвечает (может еще запускаться)"
+            fi
+            
+            # Очистка старых неиспользуемых образов (НЕ УДАЛЯЕМ amnezia-awg!)
+            echo ""
+            echo "=========================================="
+            echo "Очистка старых образов:"
+            echo "=========================================="
+            # Удаляем только dangling образы старше 24 часов
+            docker image prune -f --filter "until=24h" --filter "dangling=true"
+            
+            echo ""
+            echo "=========================================="
+            echo "✓ Deployment завершен успешно!"
+            echo "=========================================="
+            echo ""
+            echo "Приложение доступно:"
+            echo "  Frontend: http://${{ secrets.SERVER_HOST }}"
+            echo "  Backend:  http://${{ secrets.SERVER_HOST }}:8000"
+            echo ""
