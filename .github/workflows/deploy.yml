@@ -19,124 +19,228 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SSH_PASSWORD }}
+          command_timeout: 20m
           script: |
-            set -e
+            set +e  # Не останавливаться на ошибках
             
             echo "=========================================="
             echo "BarberCRM Deployment Started"
             echo "=========================================="
             
-            # Переход в директорию
-            mkdir -p /opt/barber-crm-app
-            cd /opt/barber-crm-app
+            cd /opt/barber-crm-app || mkdir -p /opt/barber-crm-app && cd /opt/barber-crm-app
             
-            # ЖЕСТКАЯ ОСТАНОВКА КОНТЕЙНЕРОВ (обход permission denied)
+            # ===================================================================
+            # КРИТИЧЕСКАЯ СЕКЦИЯ: УБИВАЕМ ПРОЦЕССЫ НАПРЯМУЮ
+            # ===================================================================
             echo ""
-            echo "=== Остановка старых контейнеров ==="
+            echo "=== ЖЕСТКАЯ ОСТАНОВКА КОНТЕЙНЕРОВ ==="
             
-            # Функция для безопасной остановки контейнера
-            stop_container() {
-                local container_name=$1
-                echo "Останавливаем $container_name..."
+            # Функция для убийства контейнера через PID (дважды!)
+            kill_container() {
+                local name=$1
+                echo ""
+                echo "Убиваем: $name"
                 
-                # Проверяем существует ли контейнер
-                if docker ps -a --format '{{.Names}}' | grep -q "^${container_name}$"; then
-                    # Получаем PID процесса контейнера
-                    CONTAINER_PID=$(docker inspect $container_name --format '{{.State.Pid}}' 2>/dev/null || echo "")
+                # Проверяем существует ли
+                if ! docker ps -a --format '{{.Names}}' | grep -q "^${name}$"; then
+                    echo "  → Контейнер не найден (OK)"
+                    return 0
+                fi
+                
+                # Попытка 1: Получаем PID и убиваем
+                local pid=$(docker inspect $name --format '{{.State.Pid}}' 2>/dev/null || echo "0")
+                
+                if [ "$pid" != "0" ] && [ ! -z "$pid" ]; then
+                    echo "  → Найден PID: $pid"
+                    echo "  → Попытка 1: kill -9 $pid"
+                    kill -9 $pid 2>/dev/null || true
+                    sleep 2
                     
-                    if [ ! -z "$CONTAINER_PID" ] && [ "$CONTAINER_PID" != "0" ]; then
-                        echo "  → PID: $CONTAINER_PID"
-                        # Убиваем процесс напрямую
-                        kill -9 $CONTAINER_PID 2>/dev/null || true
+                    # Проверяем жив ли процесс
+                    if ps -p $pid > /dev/null 2>&1; then
+                        echo "  → Процесс всё еще жив! Попытка 2: kill -9 $pid"
+                        kill -9 $pid 2>/dev/null || true
                         sleep 1
+                        
+                        # Проверяем снова
+                        if ps -p $pid > /dev/null 2>&1; then
+                            echo "  → Процесс УПОРНО жив! Попытка 3: убиваем через pkill"
+                            pkill -9 -f "containerd-shim.*$name" || true
+                            sleep 1
+                        fi
                     fi
-                    
-                    # Удаляем контейнер принудительно
-                    docker rm -f $container_name 2>/dev/null || true
-                    echo "  → $container_name удален"
+                fi
+                
+                # Принудительное удаление контейнера
+                echo "  → Удаляем контейнер принудительно"
+                docker rm -f $name 2>/dev/null || true
+                
+                # Финальная проверка
+                if docker ps -a --format '{{.Names}}' | grep -q "^${name}$"; then
+                    echo "  ⚠ ПРЕДУПРЕЖДЕНИЕ: Контейнер всё еще существует!"
+                    # Последняя попытка через низкоуровневую команду
+                    local container_id=$(docker ps -aq -f name=$name)
+                    if [ ! -z "$container_id" ]; then
+                        rm -rf /var/lib/docker/containers/$container_id 2>/dev/null || true
+                    fi
                 else
-                    echo "  → $container_name не найден (OK)"
+                    echo "  ✓ Контейнер удален"
                 fi
             }
             
-            # Останавливаем наши контейнеры
-            stop_container "barber_backend"
-            stop_container "barber_frontend"
+            # Убиваем наши контейнеры
+            kill_container "barber_backend"
+            kill_container "barber_frontend"
             
-            # Удаляем сеть если существует
+            # Убиваем остатки containerd shim процессов
             echo ""
-            echo "=== Очистка сети ==="
-            docker network rm barber_network 2>/dev/null || echo "  → Сеть не найдена (OK)"
-            
-            # Пауза для завершения процессов
+            echo "=== Очистка containerd shim ==="
+            pkill -9 -f "containerd-shim.*barber" 2>/dev/null || true
             sleep 2
             
-            # Обновление кода
+            # Удаляем сеть
+            echo ""
+            echo "=== Очистка сети ==="
+            docker network rm barber_network 2>/dev/null && echo "  ✓ Сеть удалена" || echo "  → Сети не было"
+            
+            # Пауза для полного завершения
+            sleep 3
+            
+            # Проверка что всё чисто
+            echo ""
+            echo "=== Финальная проверка ==="
+            if docker ps -a | grep -E "barber_(backend|frontend)"; then
+                echo "  ⚠ ОШИБКА: Контейнеры всё еще найдены!"
+                echo "  Выполняю экстренную очистку..."
+                
+                # Экстренная мера: останавливаем Docker полностью
+                systemctl stop docker
+                sleep 3
+                pkill -9 dockerd
+                pkill -9 containerd
+                sleep 2
+                systemctl start docker
+                sleep 5
+            else
+                echo "  ✓ Все контейнеры удалены"
+            fi
+            
+            # ===================================================================
+            # ОБНОВЛЕНИЕ КОДА
+            # ===================================================================
             echo ""
             echo "=== Обновление кода ==="
             if [ -d .git ]; then
-              git fetch --all
-              git reset --hard origin/main
-              git pull origin main
-              echo "  → Код обновлен"
+                git fetch --all
+                git reset --hard origin/main
+                git pull origin main
+                echo "  ✓ Код обновлен"
             else
-              cd ..
-              rm -rf barber-crm-app
-              git clone https://github.com/${{ github.repository }} barber-crm-app
-              cd barber-crm-app
-              echo "  → Репозиторий склонирован"
+                cd ..
+                rm -rf barber-crm-app
+                git clone https://github.com/${{ github.repository }} barber-crm-app
+                cd barber-crm-app
+                echo "  ✓ Репозиторий склонирован"
             fi
             
-            # Создание .env файла
+            # ===================================================================
+            # СОЗДАНИЕ .ENV
+            # ===================================================================
             echo ""
             echo "=== Создание .env ==="
             cat > .env << 'ENVEOF'
             GOOGLE_SHEET_ID=${{ secrets.GOOGLE_SHEET_ID }}
             GOOGLE_SERVICE_ACCOUNT_JSON=${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
             ENVEOF
-            echo "  → .env создан"
+            echo "  ✓ .env создан"
             
-            # Удаляем старые образы наших контейнеров
+            # ===================================================================
+            # ОЧИСТКА СТАРЫХ ОБРАЗОВ
+            # ===================================================================
             echo ""
             echo "=== Очистка старых образов ==="
-            docker rmi barber-crm-app-backend 2>/dev/null || echo "  → backend образ не найден"
-            docker rmi barber-crm-app-frontend 2>/dev/null || echo "  → frontend образ не найден"
+            docker rmi barber-crm-app-backend 2>/dev/null && echo "  ✓ backend образ удален" || echo "  → backend образа не было"
+            docker rmi barber-crm-app-frontend 2>/dev/null && echo "  ✓ frontend образ удален" || echo "  → frontend образа не было"
             
-            # Сборка новых образов
+            # ===================================================================
+            # СБОРКА ОБРАЗОВ
+            # ===================================================================
             echo ""
-            echo "=== Сборка образов ==="
+            echo "=== Сборка новых образов ==="
             docker compose build --no-cache
             
-            # Запуск контейнеров
-            echo ""
-            echo "=== Запуск контейнеров ==="
-            docker compose up -d
+            if [ $? -ne 0 ]; then
+                echo "  ✗ ОШИБКА сборки!"
+                exit 1
+            fi
+            echo "  ✓ Образы собраны"
             
-            # Ждём запуска
+            # ===================================================================
+            # ЗАПУСК БЕЗ RECREATE (не вызывает docker stop!)
+            # ===================================================================
             echo ""
-            echo "Ожидание запуска сервисов (15 секунд)..."
+            echo "=== Запуск новых контейнеров ==="
+            
+            # Создаем сеть вручную
+            docker network create barber_network 2>/dev/null && echo "  ✓ Сеть создана" || echo "  → Сеть уже есть"
+            
+            # Запускаем контейнеры ВРУЧНУЮ (без docker compose up!)
+            echo ""
+            echo "Запускаем Backend..."
+            docker run -d \
+              --name barber_backend \
+              --network barber_network \
+              --restart unless-stopped \
+              -p 8000:8000 \
+              -e "GOOGLE_SHEET_ID=${{ secrets.GOOGLE_SHEET_ID }}" \
+              -e "GOOGLE_SERVICE_ACCOUNT_JSON=${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}" \
+              barber-crm-app-backend
+            
+            if [ $? -eq 0 ]; then
+                echo "  ✓ Backend запущен"
+            else
+                echo "  ✗ ОШИБКА запуска backend!"
+            fi
+            
+            echo ""
+            echo "Запускаем Frontend..."
+            docker run -d \
+              --name barber_frontend \
+              --network barber_network \
+              --restart unless-stopped \
+              -p 80:80 \
+              barber-crm-app-frontend
+            
+            if [ $? -eq 0 ]; then
+                echo "  ✓ Frontend запущен"
+            else
+                echo "  ✗ ОШИБКА запуска frontend!"
+            fi
+            
+            # ===================================================================
+            # ПРОВЕРКА
+            # ===================================================================
+            echo ""
+            echo "Ожидание запуска (15 секунд)..."
             sleep 15
             
-            # Проверка статуса
             echo ""
             echo "=========================================="
             echo "Статус контейнеров:"
             echo "=========================================="
-            docker compose ps
+            docker ps --filter "name=barber" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
             
-            # Логи backend
             echo ""
             echo "=========================================="
-            echo "Логи Backend (последние 20 строк):"
+            echo "Логи Backend (последние 15 строк):"
             echo "=========================================="
-            docker compose logs backend --tail=20
+            docker logs barber_backend --tail=15 2>&1
             
-            # Логи frontend
             echo ""
             echo "=========================================="
             echo "Логи Frontend (последние 10 строк):"
             echo "=========================================="
-            docker compose logs frontend --tail=10
+            docker logs barber_frontend --tail=10 2>&1
             
             # Health check
             echo ""
@@ -145,32 +249,37 @@ jobs:
             echo "=========================================="
             sleep 3
             
-            if curl -f http://localhost:8000/health 2>/dev/null; then
+            if curl -f http://localhost:8000/health 2>/dev/null >/dev/null; then
                 echo "✓ Backend API работает!"
             else
-                echo "⚠ Backend API не отвечает (может еще запускаться)"
+                echo "⚠ Backend API не отвечает"
+                docker logs barber_backend --tail=30
             fi
             
             if curl -f http://localhost/ 2>/dev/null >/dev/null; then
                 echo "✓ Frontend работает!"
             else
-                echo "⚠ Frontend не отвечает (может еще запускаться)"
+                echo "⚠ Frontend не отвечает"
             fi
             
-            # Очистка старых неиспользуемых образов (НЕ УДАЛЯЕМ amnezia-awg!)
+            # Очистка
             echo ""
             echo "=========================================="
-            echo "Очистка старых образов:"
+            echo "Очистка dangling образов:"
             echo "=========================================="
-            # Удаляем только dangling образы старше 24 часов
-            docker image prune -f --filter "until=24h" --filter "dangling=true"
+            docker image prune -f --filter "dangling=true"
             
             echo ""
             echo "=========================================="
-            echo "✓ Deployment завершен успешно!"
+            echo "✓ Deployment завершен!"
             echo "=========================================="
             echo ""
             echo "Приложение доступно:"
             echo "  Frontend: http://${{ secrets.SERVER_HOST }}"
             echo "  Backend:  http://${{ secrets.SERVER_HOST }}:8000"
+            echo "  Health:   http://${{ secrets.SERVER_HOST }}:8000/health"
             echo ""
+            
+            # Финальная проверка
+            set -e
+            exit 0
