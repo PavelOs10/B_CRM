@@ -15,7 +15,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="BarberCRM API", version="2.0.0")
+app = FastAPI(title="BarberCRM API", version="2.0.1")
 
 # CORS
 app.add_middleware(
@@ -31,19 +31,37 @@ app.add_middleware(
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
 def get_service_account_info():
-    """Безопасное получение credentials с валидацией"""
+    """Безопасное получение credentials с валидацией и исправлением ключа"""
     try:
         json_str = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON', '{}')
         if json_str == '{}':
             logger.error("GOOGLE_SERVICE_ACCOUNT_JSON не установлен")
             return None
-        return json.loads(json_str)
+        
+        info = json.loads(json_str)
+        
+        # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Обработка переносов строк в приватном ключе
+        # При передаче через ENV переменные \n часто экранируется
+        if 'private_key' in info:
+            info['private_key'] = info['private_key'].replace('\\n', '\n')
+            
+        return info
     except json.JSONDecodeError as e:
         logger.error(f"Ошибка парсинга GOOGLE_SERVICE_ACCOUNT_JSON: {e}")
         return None
 
 SERVICE_ACCOUNT_INFO = get_service_account_info()
 SPREADSHEET_ID = os.getenv('GOOGLE_SHEET_ID', '')
+
+# === ДИАГНОСТИКА ПРИ СТАРТЕ ===
+if SERVICE_ACCOUNT_INFO:
+    email = SERVICE_ACCOUNT_INFO.get('client_email', 'Не найден')
+    logger.info(f"--- ЗАПУСК СИСТЕМЫ ---")
+    logger.info(f"Service Account Email: {email}")
+    logger.info(f"Target Spreadsheet ID: {SPREADSHEET_ID}")
+    logger.info(f"Пожалуйста, убедитесь, что email {email} является Редактором таблицы.")
+else:
+    logger.warning("Service Account Credentials не загружены!")
 
 if not SPREADSHEET_ID:
     logger.warning("GOOGLE_SHEET_ID не установлен!")
@@ -76,10 +94,10 @@ def get_sheets_client():
         creds = Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPES)
         return gspread.authorize(creds)
     except Exception as e:
-        logger.error(f"Ошибка подключения к Google Sheets: {e}")
+        logger.error(f"Ошибка авторизации Google Sheets: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Не удалось подключиться к Google Sheets: {str(e)}"
+            detail=f"Ошибка авторизации Google: {str(e)}"
         )
 
 # ============= МОДЕЛИ ДАННЫХ =============
@@ -107,7 +125,6 @@ class BranchRegister(BaseModel):
     
     @validator('manager_phone')
     def validate_phone(cls, v):
-        # Убираем все кроме цифр
         cleaned = ''.join(filter(str.isdigit, v))
         if len(cleaned) < 10:
             raise ValueError('Некорректный номер телефона')
@@ -269,10 +286,25 @@ def ensure_sheet_exists(client, spreadsheet_id: str, sheet_name: str, headers: L
         
         return worksheet
     except gspread.exceptions.APIError as e:
-        logger.error(f"Google Sheets API Error: {e}")
+        # Улучшенная диагностика ошибок API
+        error_payload = e.response.json() if hasattr(e, 'response') and e.response else {}
+        error_message = error_payload.get('error', {}).get('message', str(e))
+        
+        logger.error(f"Google Sheets API Error: {error_message}")
+        
+        # Если ошибка 403 (Permission denied)
+        if '403' in str(e) or 'permission' in error_message.lower():
+             raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Нет прав доступа к таблице. Убедитесь, что сервисный аккаунт "
+                    f"({SERVICE_ACCOUNT_INFO.get('client_email', 'unknown')}) добавлен в редакторы."
+                )
+            )
+            
         raise HTTPException(
             status_code=500,
-            detail=f"Ошибка Google Sheets API. Проверьте права доступа к таблице"
+            detail=f"Ошибка Google Sheets API: {error_message}"
         )
     except Exception as e:
         logger.error(f"Ошибка работы с листом {sheet_name}: {e}")
@@ -297,7 +329,6 @@ def get_branch_by_name(client, name: str) -> Optional[Dict]:
     try:
         spreadsheet = client.open_by_key(SPREADSHEET_ID)
         
-        # Проверяем существование листа "Филиалы"
         try:
             worksheet = spreadsheet.worksheet("Филиалы")
         except gspread.exceptions.WorksheetNotFound:
@@ -320,7 +351,7 @@ def get_branch_by_name(client, name: str) -> Optional[Dict]:
 def read_root():
     """Health check"""
     return {
-        "message": "Barber CRM API v2.0",
+        "message": "Barber CRM API v2.0.1",
         "status": "online",
         "google_sheets_configured": SERVICE_ACCOUNT_INFO is not None and SPREADSHEET_ID != ''
     }
@@ -331,7 +362,7 @@ def health_check():
     issues = []
     
     if not SERVICE_ACCOUNT_INFO:
-        issues.append("GOOGLE_SERVICE_ACCOUNT_JSON не настроен")
+        issues.append("GOOGLE_SERVICE_ACCOUNT_JSON не настроен или некорректен")
     
     if not SPREADSHEET_ID:
         issues.append("GOOGLE_SHEET_ID не настроен")
@@ -339,6 +370,7 @@ def health_check():
     return {
         "status": "healthy" if not issues else "degraded",
         "issues": issues,
+        "service_account_email": SERVICE_ACCOUNT_INFO.get('client_email') if SERVICE_ACCOUNT_INFO else None,
         "timestamp": datetime.now().isoformat()
     }
 
@@ -399,9 +431,10 @@ def register_branch(branch: BranchRegister):
         raise
     except Exception as e:
         logger.error(f"Ошибка регистрации филиала: {e}")
+        # Если ошибка не HTTP, оборачиваем её
         raise HTTPException(
             status_code=500,
-            detail=f"Ошибка регистрации: {str(e)}"
+            detail=f"Внутренняя ошибка сервера при регистрации: {str(e)}"
         )
 
 @app.post("/login")
