@@ -70,7 +70,42 @@ jobs:
             docker network rm barber_network 2>/dev/null || true
             
             sleep 2
+            stop_container() {
+                local name=$1
+                echo "Останавливаем: $name"
+                
+                if ! docker ps -a --format '{{.Names}}' | grep -q "^${name}$" 2>/dev/null; then
+                    echo "  → Не найден"
+                    return 0
+                fi
+                
+                local pid=$(docker inspect $name --format '{{.State.Pid}}' 2>/dev/null || echo "0")
+                
+                if [ "$pid" != "0" ] && [ ! -z "$pid" ]; then
+                    echo "  → PID: $pid, убиваем"
+                    kill -9 $pid 2>/dev/null || true
+                    sleep 1
+                    
+                    if ps -p $pid > /dev/null 2>&1; then
+                        kill -9 $pid 2>/dev/null || true
+                        sleep 1
+                    fi
+                fi
+                
+                docker rm -f $name 2>/dev/null || true
+                echo "  ✓ Удален"
+            }
             
+            stop_container "barber_backend"
+            stop_container "barber_frontend"
+            
+            # Очистка сети
+            echo ""
+            echo "=== Очистка сети ==="
+            docker network rm barber_network 2>/dev/null || true
+            
+            sleep 2
+                        
             # ===================================================================
             # ОБНОВЛЕНИЕ КОДА
             # ===================================================================
