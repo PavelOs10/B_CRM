@@ -14,7 +14,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="BarberCRM API", version="3.0.1")
+app = FastAPI(title="BarberCRM API", version="3.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,6 +42,17 @@ def get_service_account_info():
 
 SERVICE_ACCOUNT_INFO = get_service_account_info()
 SPREADSHEET_ID = os.getenv('GOOGLE_SHEET_ID', '')
+
+# Фиксированные цели для каждого филиала
+BRANCH_GOALS = {
+    "morning_events": 16,
+    "field_visits": 4,
+    "one_on_one": 6,
+    "weekly_reports": 4,
+    "master_plans": 10,
+    "reviews": 60,  # 52 по факту (13*4), но целевой 60
+    "new_employees": 10
+}
 
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
@@ -138,20 +149,14 @@ class MasterPlan(BaseModel):
 class Reviews(BaseModel):
     week: str
     manager_name: str
-    plan: int = Field(..., ge=0)
+    plan: int = Field(default=13, ge=0)  # Фиксированный план 13 в неделю
     fact: int = Field(..., ge=0)
-    monthly_target: int = Field(..., ge=0)
+    monthly_target: int = Field(default=52, ge=0)  # 13 * 4 недели
 
 class BranchSummary(BaseModel):
     manager: str
     month: str
-    morning_events_goal: int = Field(..., ge=0)
-    field_visits_goal: int = Field(..., ge=0)
-    one_on_one_goal: int = Field(..., ge=0)
-    weekly_reports_goal: int = Field(..., ge=0)
-    master_plans_goal: int = Field(..., ge=0)
-    reviews_goal: int = Field(..., ge=0)
-    new_employees_goal: int = Field(..., ge=0)
+    # Цели берутся из BRANCH_GOALS автоматически
 
 # ============= УТИЛИТЫ =============
 
@@ -174,9 +179,8 @@ def ensure_sheet_exists(client, spreadsheet_id: str, sheet_name: str, headers: L
         raise HTTPException(status_code=500, detail=str(e))
 
 def insert_row_at_top(worksheet, data: List[Any]):
-    """ИСПРАВЛЕНО: Конвертируем все значения в строки/числа"""
+    """Конвертируем все значения в строки/числа"""
     try:
-        # Конвертируем данные в правильный формат
         converted_data = []
         for item in data:
             if item is None:
@@ -204,11 +208,31 @@ def get_branch_by_name(client, name: str) -> Optional[Dict]:
     except:
         return None
 
+def count_records_for_month(client, branch_name: str, sheet_suffix: str, month: str) -> int:
+    """Подсчитывает количество записей за месяц"""
+    try:
+        spreadsheet = client.open_by_key(SPREADSHEET_ID)
+        sheet_name = f"{sheet_suffix} - {branch_name}"
+        worksheet = spreadsheet.worksheet(sheet_name)
+        records = worksheet.get_all_records()
+        
+        # Подсчитываем записи, где упоминается месяц
+        count = 0
+        for record in records:
+            record_str = str(record).lower()
+            if month.lower() in record_str:
+                count += 1
+        
+        return count
+    except Exception as e:
+        logger.error(f"Ошибка подсчета записей для {sheet_name}: {e}")
+        return 0
+
 # ============= API =============
 
 @app.get("/")
 def read_root():
-    return {"message": "Barber CRM API v3.0.1", "status": "online"}
+    return {"message": "Barber CRM API v3.1.0", "status": "online"}
 
 @app.get("/health")
 def health_check():
@@ -225,7 +249,7 @@ def register_branch(branch: BranchRegister):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     row = [timestamp, branch.name, branch.address, branch.manager_name, branch.manager_phone, hash_password(branch.password), token, "Активен"]
     insert_row_at_top(worksheet, row)
-    return {"success": True, "token": token, "branch": {"name": branch.name}}
+    return {"success": True, "token": token, "branch": {"name": branch.name, "address": branch.address}}
 
 @app.post("/login")
 def login(request: LoginRequest):
@@ -236,6 +260,90 @@ def login(request: LoginRequest):
     if branch.get('Пароль (хеш)') != hash_password(request.password):
         raise HTTPException(status_code=401, detail="Неверный пароль")
     return {"success": True, "token": branch.get('Токен'), "branch": {"name": branch.get('Название'), "address": branch.get('Адрес'), "manager": branch.get('Управляющий')}}
+
+# Новый эндпоинт для получения списка филиалов
+@app.get("/branches")
+def get_branches():
+    """Получить список всех филиалов"""
+    try:
+        client = get_sheets_client()
+        spreadsheet = client.open_by_key(SPREADSHEET_ID)
+        worksheet = spreadsheet.worksheet("Филиалы")
+        records = worksheet.get_all_records()
+        
+        branches = []
+        for record in records:
+            if record.get('Статус') == 'Активен':
+                branches.append({
+                    "name": record.get('Название'),
+                    "address": record.get('Адрес'),
+                    "manager": record.get('Управляющий')
+                })
+        
+        return {"success": True, "branches": branches}
+    except Exception as e:
+        logger.error(f"Ошибка получения филиалов: {e}")
+        return {"success": True, "branches": []}
+
+# Новый эндпоинт для получения сводки по филиалу
+@app.get("/dashboard-summary/{branch_name}")
+def get_dashboard_summary(branch_name: str, month: Optional[str] = None):
+    """Получить сводку для дашборда"""
+    try:
+        client = get_sheets_client()
+        
+        # Если месяц не указан, используем текущий
+        if not month:
+            month = datetime.now().strftime("%B %Y")  # например "January 2026"
+        
+        summary = {
+            "morning_events": {
+                "current": count_records_for_month(client, branch_name, "Утренние мероприятия", month),
+                "goal": BRANCH_GOALS["morning_events"],
+                "label": "Утренние мероприятия"
+            },
+            "field_visits": {
+                "current": count_records_for_month(client, branch_name, "Полевые выходы", month),
+                "goal": BRANCH_GOALS["field_visits"],
+                "label": "Полевые выходы"
+            },
+            "one_on_one": {
+                "current": count_records_for_month(client, branch_name, "One-on-One", month),
+                "goal": BRANCH_GOALS["one_on_one"],
+                "label": "One-on-One встречи"
+            },
+            "weekly_reports": {
+                "current": count_records_for_month(client, branch_name, "Еженедельные показатели", month),
+                "goal": BRANCH_GOALS["weekly_reports"],
+                "label": "Еженедельные отчёты"
+            },
+            "master_plans": {
+                "current": count_records_for_month(client, branch_name, "Планы мастеров", month),
+                "goal": BRANCH_GOALS["master_plans"],
+                "label": "Планы мастеров"
+            },
+            "reviews": {
+                "current": count_records_for_month(client, branch_name, "Отзывы", month),
+                "goal": BRANCH_GOALS["reviews"],
+                "label": "Отзывы"
+            },
+            "new_employees": {
+                "current": count_records_for_month(client, branch_name, "Адаптация новичков", month),
+                "goal": BRANCH_GOALS["new_employees"],
+                "label": "Новые сотрудники"
+            }
+        }
+        
+        # Добавляем процент выполнения
+        for key in summary:
+            goal = summary[key]["goal"]
+            current = summary[key]["current"]
+            summary[key]["percentage"] = round((current / goal * 100), 1) if goal > 0 else 0
+        
+        return {"success": True, "summary": summary, "month": month}
+    except Exception as e:
+        logger.error(f"Ошибка получения сводки: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============= УТРЕННИЕ МЕРОПРИЯТИЯ =============
 
@@ -513,26 +621,19 @@ def submit_branch_summary(branch_name: str, summary: BranchSummary):
     sheet_name = f"Сводка - {branch_name}"
     spreadsheet = client.open_by_key(SPREADSHEET_ID)
     
-    def count_records(sname: str, month: str) -> int:
-        try:
-            ws = spreadsheet.worksheet(sname)
-            records = ws.get_all_records()
-            return len([r for r in records if month.lower() in str(r).lower()])
-        except:
-            return 0
-    
     headers = ["Дата отправки", "Филиал", "Управляющий", "Месяц", "Метрика", "Текущее количество", "Цель на месяц", "Выполнение %"]
     worksheet = ensure_sheet_exists(client, SPREADSHEET_ID, sheet_name, headers)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
+    # Подсчитываем текущие значения
     metrics = [
-        ("Утренние мероприятия", count_records(f"Утренние мероприятия - {branch_name}", summary.month), summary.morning_events_goal),
-        ("Полевые выходы", count_records(f"Полевые выходы - {branch_name}", summary.month), summary.field_visits_goal),
-        ("One-on-One встречи", count_records(f"One-on-One - {branch_name}", summary.month), summary.one_on_one_goal),
-        ("Еженедельные отчёты", count_records(f"Еженедельные показатели - {branch_name}", summary.month), summary.weekly_reports_goal),
-        ("Индивидуальные планы", count_records(f"Планы мастеров - {branch_name}", summary.month), summary.master_plans_goal),
-        ("Отзывы", count_records(f"Отзывы - {branch_name}", summary.month), summary.reviews_goal),
-        ("Новые сотрудники", count_records(f"Адаптация новичков - {branch_name}", summary.month), summary.new_employees_goal),
+        ("Утренние мероприятия", count_records_for_month(client, branch_name, "Утренние мероприятия", summary.month), BRANCH_GOALS["morning_events"]),
+        ("Полевые выходы", count_records_for_month(client, branch_name, "Полевые выходы", summary.month), BRANCH_GOALS["field_visits"]),
+        ("One-on-One встречи", count_records_for_month(client, branch_name, "One-on-One", summary.month), BRANCH_GOALS["one_on_one"]),
+        ("Еженедельные отчёты", count_records_for_month(client, branch_name, "Еженедельные показатели", summary.month), BRANCH_GOALS["weekly_reports"]),
+        ("Индивидуальные планы", count_records_for_month(client, branch_name, "Планы мастеров", summary.month), BRANCH_GOALS["master_plans"]),
+        ("Отзывы", count_records_for_month(client, branch_name, "Отзывы", summary.month), BRANCH_GOALS["reviews"]),
+        ("Новые сотрудники", count_records_for_month(client, branch_name, "Адаптация новичков", summary.month), BRANCH_GOALS["new_employees"]),
     ]
     
     for metric_name, current, goal in metrics:

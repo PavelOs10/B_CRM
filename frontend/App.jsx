@@ -1,11 +1,19 @@
-// ==================== BARBER CRM v3.0.1 FINAL ====================
-// ПОЛНАЯ ВЕРСИЯ СО ВСЕМИ ФОРМАМИ
-// ИСПРАВЛЕНИЯ: автоматический расчет недели, все формы работают
 
 const { useState, useEffect, useRef } = React;
 
 // ==================== CONFIG ====================
 const API_BASE_URL = 'http://166.1.201.124:8000';
+
+// НОВОЕ v3.1.0: Фиксированные цели для каждого филиала
+const BRANCH_GOALS = {
+  morning_events: 16,
+  field_visits: 4,
+  one_on_one: 6,
+  weekly_reports: 4,
+  master_plans: 10,
+  reviews: 60,
+  new_employees: 10
+};
 
 // ==================== API ====================
 const api = {
@@ -45,6 +53,13 @@ const getWeekNumber = (date) => {
   return weekNo;
 };
 
+// Получение текущего месяца
+const getCurrentMonth = () => {
+  const months = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+  const now = new Date();
+  return `${months[now.getMonth()]} ${now.getFullYear()}`;
+};
+
 // ==================== ICONS ====================
 const Icons = {
   Plus: ({className}) => (
@@ -73,6 +88,9 @@ const Icons = {
   ),
   Eye: ({className}) => (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+  ),
+  Info: ({className}) => (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
   )
 };
 
@@ -136,6 +154,22 @@ const Toast = ({ message, type = 'success', onClose }) => {
     </div>
   );
 };
+
+// НОВОЕ v3.1.0: Компонент с инструкцией
+const InstructionBanner = ({ title, children }) => (
+  <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-6 rounded-r-lg">
+    <div className="flex items-start">
+      <Icons.Info className="w-5 h-5 text-blue-500 mr-3 mt-0.5 flex-shrink-0" />
+      <div className="flex-1">
+        <h4 className="font-semibold text-blue-900 mb-2">{title}</h4>
+        <div className="text-sm text-blue-800 space-y-1">
+          {children}
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
 
 // ==================== AUTH ====================
 
@@ -210,7 +244,7 @@ const AuthPage = ({ onAuth }) => {
           <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-2">
             BarberCRM
           </h1>
-          <p className="text-gray-600">v3.0.1 FINAL - Полная версия</p>
+          <p className="text-gray-600">v3.1.0 FINAL - Все обновления</p>
         </div>
 
         <div className="flex gap-2 mb-6 p-1 bg-gray-100 rounded-lg">
@@ -321,6 +355,7 @@ const BarberCRM = ({ branch, token, onLogout }) => {
     <div className="min-h-screen bg-gray-50 flex">
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       
+      {/* Sidebar */}
       <div className={`bg-gradient-to-b from-gray-900 to-gray-800 text-white transition-all duration-300 ${sidebarOpen ? 'w-64' : 'w-20'} flex flex-col`}>
         <div className="p-6 flex items-center justify-between border-b border-gray-700">
           {sidebarOpen && <h2 className="font-bold text-xl">BarberCRM</h2>}
@@ -369,8 +404,19 @@ const BarberCRM = ({ branch, token, onLogout }) => {
         </div>
       </div>
 
+      {/* Main content */}
       <div className="flex-1 overflow-auto">
-        <div className="p-8">
+        {/* Фоновый PNG логотип с прозрачностью */}
+        <div className="absolute inset-0 pointer-events-none" style={{
+          backgroundImage: 'url(/logo.png)',
+          backgroundRepeat: 'no-repeat',
+          backgroundPosition: 'center',
+          backgroundSize: '50%',
+          opacity: 0.10,
+          zIndex: 0
+        }}></div>
+
+        <div className="p-8 relative z-10">
           <div className="mb-8">
             <h1 className="text-3xl font-bold text-gray-800">
               {menuItems.find((item) => item.id === currentView)?.label || 'Дашборд'}
@@ -393,51 +439,130 @@ const BarberCRM = ({ branch, token, onLogout }) => {
   );
 };
 
-// ==================== DASHBOARD ====================
+// ==================== DASHBOARD (ОБНОВЛЕНО v3.1.0) ====================
 
-const Dashboard = ({ branch }) => (
-  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-    <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-medium text-gray-600">Утренних мероприятий</h3>
-        <Icons.Calendar className="w-5 h-5 text-blue-600" />
+const Dashboard = ({ branch }) => {
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadSummary = async () => {
+      try {
+        const data = await api.request(`/dashboard-summary/${branch.name}`);
+        setSummary(data.summary);
+      } catch (err) {
+        console.error('Ошибка загрузки сводки:', err);
+        // Заглушка при ошибке
+        setSummary({
+          morning_events: { current: 0, goal: BRANCH_GOALS.morning_events, percentage: 0, label: "Утренние мероприятия" },
+          field_visits: { current: 0, goal: BRANCH_GOALS.field_visits, percentage: 0, label: "Полевые выходы" },
+          one_on_one: { current: 0, goal: BRANCH_GOALS.one_on_one, percentage: 0, label: "One-on-One" },
+          master_plans: { current: 0, goal: BRANCH_GOALS.master_plans, percentage: 0, label: "Планы мастеров" }
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadSummary();
+  }, [branch.name]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-gray-500">Загрузка данных...</div>
       </div>
-      <p className="text-3xl font-bold text-gray-800">12</p>
-      <p className="text-sm text-green-600 mt-2">за этот месяц</p>
-    </div>
+    );
+  }
 
-    <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-medium text-gray-600">Полевых выходов</h3>
-        <Icons.Users className="w-5 h-5 text-blue-600" />
+  if (!summary) return <div>Нет данных</div>;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        {/* Утренние мероприятия */}
+        <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-gray-600">Утренних мероприятий</h3>
+            <Icons.Calendar className="w-5 h-5 text-blue-600" />
+          </div>
+          <p className="text-3xl font-bold text-gray-800">{summary.morning_events?.current || 0}</p>
+          <div className="mt-2 flex items-center justify-between">
+            <p className="text-sm text-gray-600">Цель: {summary.morning_events?.goal || BRANCH_GOALS.morning_events}</p>
+            <span className={`text-sm font-medium ${summary.morning_events?.percentage >= 100 ? 'text-green-600' : 'text-orange-600'}`}>
+              {summary.morning_events?.percentage || 0}%
+            </span>
+          </div>
+        </div>
+
+        {/* Полевых выходов */}
+        <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-gray-600">Полевых выходов</h3>
+            <Icons.Users className="w-5 h-5 text-blue-600" />
+          </div>
+          <p className="text-3xl font-bold text-gray-800">{summary.field_visits?.current || 0}</p>
+          <div className="mt-2 flex items-center justify-between">
+            <p className="text-sm text-gray-600">Цель: {summary.field_visits?.goal || BRANCH_GOALS.field_visits}</p>
+            <span className={`text-sm font-medium ${summary.field_visits?.percentage >= 100 ? 'text-green-600' : 'text-orange-600'}`}>
+              {summary.field_visits?.percentage || 0}%
+            </span>
+          </div>
+        </div>
+
+        {/* One-on-One */}
+        <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-gray-600">One-on-One</h3>
+            <Icons.Users className="w-5 h-5 text-blue-600" />
+          </div>
+          <p className="text-3xl font-bold text-gray-800">{summary.one_on_one?.current || 0}</p>
+          <div className="mt-2 flex items-center justify-between">
+            <p className="text-sm text-gray-600">Цель: {summary.one_on_one?.goal || BRANCH_GOALS.one_on_one}</p>
+            <span className={`text-sm font-medium ${summary.one_on_one?.percentage >= 100 ? 'text-green-600' : 'text-orange-600'}`}>
+              {summary.one_on_one?.percentage || 0}%
+            </span>
+          </div>
+        </div>
+
+        {/* Планы мастеров */}
+        <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-medium text-gray-600">Планы мастеров</h3>
+            <Icons.Chart className="w-5 h-5 text-blue-600" />
+          </div>
+          <p className="text-3xl font-bold text-gray-800">{summary.master_plans?.current || 0}</p>
+          <div className="mt-2 flex items-center justify-between">
+            <p className="text-sm text-gray-600">Цель: {summary.master_plans?.goal || BRANCH_GOALS.master_plans}</p>
+            <span className={`text-sm font-medium ${summary.master_plans?.percentage >= 100 ? 'text-green-600' : 'text-orange-600'}`}>
+              {summary.master_plans?.percentage || 0}%
+            </span>
+          </div>
+        </div>
       </div>
-      <p className="text-3xl font-bold text-gray-800">8</p>
-      <p className="text-sm text-green-600 mt-2">за этот месяц</p>
-    </div>
 
-    <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-medium text-gray-600">One-on-One</h3>
-        <Icons.Users className="w-5 h-5 text-blue-600" />
+      {/* Дополнительные метрики */}
+      <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-6 border border-blue-100">
+        <h3 className="text-lg font-semibold text-gray-800 mb-4">Дополнительные показатели</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <p className="text-sm text-gray-600">Еженедельные отчёты</p>
+            <p className="text-2xl font-bold text-gray-800">{summary.weekly_reports?.current || 0} / {BRANCH_GOALS.weekly_reports}</p>
+          </div>
+          <div>
+            <p className="text-sm text-gray-600">Отзывы</p>
+            <p className="text-2xl font-bold text-gray-800">{summary.reviews?.current || 0} / {BRANCH_GOALS.reviews}</p>
+          </div>
+          <div>
+            <p className="text-sm text-gray-600">Новые сотрудники</p>
+            <p className="text-2xl font-bold text-gray-800">{summary.new_employees?.current || 0} / {BRANCH_GOALS.new_employees}</p>
+          </div>
+        </div>
       </div>
-      <p className="text-3xl font-bold text-gray-800">15</p>
-      <p className="text-sm text-green-600 mt-2">за этот месяц</p>
     </div>
-
-    <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-medium text-gray-600">Средняя оценка</h3>
-        <Icons.Star className="w-5 h-5 text-yellow-500" filled />
-      </div>
-      <p className="text-3xl font-bold text-gray-800">8.5</p>
-      <p className="text-sm text-gray-600 mt-2">из 10</p>
-    </div>
-  </div>
-);
-
+  );
+};
 
 // ==================== FORM 1: УТРЕННИЕ МЕРОПРИЯТИЯ ====================
-// ИСПРАВЛЕНО: Автоматический расчет недели
 
 const MorningEventsPage = ({ branch, showToast }) => {
   const [view, setView] = useState('form');
@@ -457,7 +582,7 @@ const MorningEventsPage = ({ branch, showToast }) => {
     const newEvents = [...events];
     newEvents[index][field] = value;
     
-    // ИСПРАВЛЕНО: Автоматический расчет недели при изменении даты
+    // Автоматический расчет недели при изменении даты
     if (field === 'date' && value) {
       newEvents[index]['week'] = getWeekNumber(value);
     }
@@ -507,6 +632,15 @@ const MorningEventsPage = ({ branch, showToast }) => {
 
   return (
     <div className="space-y-6">
+      <InstructionBanner title="Инструкция по заполнению отчёта «Утренние мероприятия»">
+        <p>В каждую строку отчёта заносите отдельное мероприятие, проведённое утром.</p>
+        <p>• <strong>Неделя</strong> — рассчитывается автоматически по дате</p>
+        <p>• <strong>Тип мероприятия</strong> — запуск дня, мотивационная встреча, обсуждение целей, командная активность</p>
+        <p>• <strong>Участники</strong> — количество присутствовавших сотрудников</p>
+        <p>• <strong>Эффективность (1-5)</strong> — оценка по ощущениям или обратной связи</p>
+        <p>• <strong>Комментарий</strong> — итоги, настроение, особенности</p>
+      </InstructionBanner>
+
       <div className="flex gap-4 mb-6">
         <button onClick={() => setView('form')} className={`px-6 py-3 rounded-lg font-medium transition-all ${view === 'form' ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-gray-700 hover:bg-gray-50'}`}>
           Добавить мероприятия
@@ -683,6 +817,11 @@ const FieldVisitsPage = ({ branch, showToast }) => {
 
   return (
     <div className="space-y-6">
+      <InstructionBanner title="Полевые выходы">
+        <p>Проверка работы мастеров на местах. Общая оценка рассчитывается автоматически как среднее значение из 5 критериев.</p>
+        <p>Оценивайте по 10-балльной шкале каждый критерий и оставляйте комментарии.</p>
+      </InstructionBanner>
+
       <div className="flex gap-4 mb-6">
         <button onClick={() => setView('form')} className={`px-6 py-3 rounded-lg font-medium transition-all ${view === 'form' ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-gray-700'}`}>Добавить проверки</button>
         <button onClick={() => setView('history')} className={`px-6 py-3 rounded-lg font-medium transition-all ${view === 'history' ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-gray-700'}`}>История ({history.length})</button>
@@ -752,9 +891,8 @@ const FieldVisitsPage = ({ branch, showToast }) => {
   );
 };
 
-// ==================== ОСТАЛЬНЫЕ ФОРМЫ (3-8) - ПОЛНАЯ РЕАЛИЗАЦИЯ ====================
+// ==================== FORM 3: ONE-ON-ONE ====================
 
-// FORM 3: ONE-ON-ONE
 const OneOnOnePage = ({ branch, showToast }) => {
   const [view, setView] = useState('form');
   const [meetings, setMeetings] = useState([{date: '', master_name: '', goal: '', results: '', development_plan: '', indicator: '', next_meeting_date: ''}]);
@@ -781,6 +919,13 @@ const OneOnOnePage = ({ branch, showToast }) => {
 
   return (
     <div className="space-y-6">
+      <InstructionBanner title="Инструкция по заполнению отчёта «1-ON-1 встречи»">
+        <p>• <strong>Стояла цель</strong> — задача, поставленная на прошлой встрече</p>
+        <p>• <strong>Результаты работы</strong> — достигнута ли цель, что получилось/не удалось</p>
+        <p>• <strong>План развития</strong> — новые задачи до следующей встречи</p>
+        <p>• <strong>Показатель</strong> — главный KPI сотрудника (средний чек, количество записей и т.д.)</p>
+      </InstructionBanner>
+
       <div className="flex gap-4 mb-6">
         <button onClick={() => setView('form')} className={`px-6 py-3 rounded-lg font-medium ${view === 'form' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'}`}>Добавить встречи</button>
         <button onClick={() => setView('history')} className={`px-6 py-3 rounded-lg font-medium ${view === 'history' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'}`}>История ({history.length})</button>
@@ -821,7 +966,8 @@ const OneOnOnePage = ({ branch, showToast }) => {
   );
 };
 
-// FORM 4: ЕЖЕНЕДЕЛЬНЫЕ ПОКАЗАТЕЛИ
+// ==================== FORM 4: ЕЖЕНЕДЕЛЬНЫЕ ПОКАЗАТЕЛИ ====================
+
 const WeeklyMetricsPage = ({ branch, showToast }) => {
   const [metrics, setMetrics] = useState({period: '', average_check_plan: '', average_check_fact: '', cosmetics_plan: '', cosmetics_fact: '', additional_services_plan: '', additional_services_fact: ''});
   const [loading, setLoading] = useState(false);
@@ -845,6 +991,12 @@ const WeeklyMetricsPage = ({ branch, showToast }) => {
 
   return (
     <div className="space-y-6">
+      <InstructionBanner title="Справка по выставлению планов">
+        <p>• <strong>Средний чек план</strong> = (средняя цена стрижки по всем мастерам) + 25%</p>
+        <p>• <strong>Косметика план</strong> = 10% от оборота (данные из iClient - основные показатели - доход)</p>
+        <p>• <strong>Доп. услуги план</strong> = 50% от количества завершённых записей (iClient - основные показатели - завершенные записи)</p>
+      </InstructionBanner>
+
       <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl shadow-sm">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <FormInput label="Период" tooltip="Например: 1-я неделя января" required><input type="text" value={metrics.period} onChange={(e) => setMetrics({...metrics, period: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
@@ -879,7 +1031,9 @@ const WeeklyMetricsPage = ({ branch, showToast }) => {
   );
 };
 
-// FORM 5: АДАПТАЦИЯ НОВИЧКОВ
+
+// ==================== FORM 5: АДАПТАЦИЯ НОВИЧКОВ ====================
+
 const NewbieAdaptationPage = ({ branch, showToast }) => {
   const [adaptations, setAdaptations] = useState([{start_date: '', name: '', haircut_practice: '', service_standards: '', hygiene_sanitation: '', additional_services: '', cosmetics_sales: '', iclient_basics: '', status: 'В процессе'}]);
   const [loading, setLoading] = useState(false);
@@ -905,6 +1059,14 @@ const NewbieAdaptationPage = ({ branch, showToast }) => {
 
   return (
     <div className="space-y-6">
+      <InstructionBanner title="Справка по адаптации новичков">
+        <p>• <strong>Основные техники</strong> — базовые профессиональные навыки барбера: техника стрижки, бритья, укладки</p>
+        <p>• <strong>Стандарты сервиса</strong> — умение соблюдать корпоративные правила обслуживания клиентов</p>
+        <p>• <strong>Корпоративная культура</strong> — знание и принятие ценностей и внутренних правил компании</p>
+        <p>• <strong>Обучение доп. услугам</strong> — освоение дополнительных процедур (уход за бородой, камуфляж седины и пр.)</p>
+        <p>• <strong>Знания косметики</strong> — знакомство с ассортиментом и техникой продаж</p>
+      </InstructionBanner>
+
       <form onSubmit={handleSubmit} className="space-y-6">
         {adaptations.map((adapt, index) => (
           <div key={index} className="bg-white p-6 rounded-xl shadow-sm">
@@ -941,7 +1103,8 @@ const NewbieAdaptationPage = ({ branch, showToast }) => {
   );
 };
 
-// FORM 6: ПЛАНЫ МАСТЕРОВ
+// ==================== FORM 6: ПЛАНЫ МАСТЕРОВ ====================
+
 const MasterPlansPage = ({ branch, showToast }) => {
   const [plans, setPlans] = useState([{month: '', master_name: '', average_check_plan: '', average_check_fact: '', additional_services_plan: '', additional_services_fact: '', sales_plan: '', sales_fact: '', salary_plan: '', salary_fact: ''}]);
   const [loading, setLoading] = useState(false);
@@ -967,6 +1130,12 @@ const MasterPlansPage = ({ branch, showToast }) => {
 
   return (
     <div className="space-y-6">
+      <InstructionBanner title="Индивидуальные планы мастеров">
+        <p>План формируется партнёром в начале каждого месяца и состоит из 4 показателей:</p>
+        <p>• Средний чек • Зарплата за месяц • Кол-во доп. услуг • Объём продаж (допы + косметика)</p>
+        <p>На 1-on-1 встрече в конце месяца партнёр и мастер анализируют выполнение плана и формируют новые задачи.</p>
+      </InstructionBanner>
+
       <form onSubmit={handleSubmit} className="space-y-6">
         {plans.map((plan, index) => (
           <div key={index} className="bg-white p-6 rounded-xl shadow-sm">
@@ -1004,9 +1173,10 @@ const MasterPlansPage = ({ branch, showToast }) => {
   );
 };
 
-// FORM 7: ОТЗЫВЫ
+// ==================== FORM 7: ОТЗЫВЫ (ОБНОВЛЕНО v3.1.0) ====================
+
 const ReviewsPage = ({ branch, showToast }) => {
-  const [review, setReview] = useState({week: '', manager_name: '', plan: '', fact: '', monthly_target: ''});
+  const [review, setReview] = useState({week: '', manager_name: '', plan: 13, fact: '', monthly_target: 52});
   const [loading, setLoading] = useState(false);
   const [history, setHistory] = useState([]);
 
@@ -1014,9 +1184,9 @@ const ReviewsPage = ({ branch, showToast }) => {
     e.preventDefault();
     setLoading(true);
     try {
-      await api.request(`/reviews/${branch.name}`, { method: 'POST', body: JSON.stringify({...review, plan: parseInt(review.plan), fact: parseInt(review.fact), monthly_target: parseInt(review.monthly_target)}) });
+      await api.request(`/reviews/${branch.name}`, { method: 'POST', body: JSON.stringify({...review, plan: 13, fact: parseInt(review.fact), monthly_target: 52}) });
       showToast('Отзывы успешно добавлены!');
-      setReview({week: '', manager_name: '', plan: '', fact: '', monthly_target: ''});
+      setReview({week: '', manager_name: '', plan: 13, fact: '', monthly_target: 52});
       loadHistory();
     } catch (err) { showToast(err.message, 'error'); } finally { setLoading(false); }
   };
@@ -1028,13 +1198,19 @@ const ReviewsPage = ({ branch, showToast }) => {
 
   return (
     <div className="space-y-6">
+      <InstructionBanner title="Отзывы">
+        <p>Фиксированный план: <strong>13 отзывов в неделю</strong> на филиал.</p>
+        <p>Введите факт отзывов за текущую неделю. Процент выполнения рассчитается автоматически.</p>
+      </InstructionBanner>
+
       <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl shadow-sm">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <FormInput label="Неделя" required><select value={review.week} onChange={(e) => setReview({...review, week: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required><option value="">Выбрать...</option>{['1-я неделя', '2-я неделя', '3-я неделя', '4-я неделя'].map(w => <option key={w} value={w}>{w}</option>)}</select></FormInput>
           <FormInput label="Имя управляющего" required><input type="text" value={review.manager_name} onChange={(e) => setReview({...review, manager_name: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
-          <FormInput label="План отзывов" required><input type="number" value={review.plan} onChange={(e) => setReview({...review, plan: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
+          <FormInput label="План отзывов (фиксированный)">
+            <input type="number" value={13} readOnly className="w-full px-4 py-3 border rounded-lg bg-gray-100" />
+          </FormInput>
           <FormInput label="Факт отзывов" required><input type="number" value={review.fact} onChange={(e) => setReview({...review, fact: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
-          <FormInput label="Целевой показатель за месяц" required><input type="number" value={review.monthly_target} onChange={(e) => setReview({...review, monthly_target: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
         </div>
         <button type="submit" disabled={loading} className="mt-4 px-8 py-3 bg-blue-600 text-white rounded-lg">{loading ? 'Сохранение...' : 'Сохранить'}</button>
       </form>
@@ -1044,7 +1220,7 @@ const ReviewsPage = ({ branch, showToast }) => {
           <h3 className="text-lg font-semibold mb-2">Сводка за месяц</h3>
           <div className="grid grid-cols-2 gap-4">
             <div><span className="text-gray-600">Всего отзывов:</span> <span className="font-bold text-2xl">{totalReviews}</span></div>
-            <div><span className="text-gray-600">Целевой показатель:</span> <span className="font-bold text-2xl">{review.monthly_target || history[0]['Целевой показатель за месяц']}</span></div>
+            <div><span className="text-gray-600">Целевой показатель:</span> <span className="font-bold text-2xl">52</span></div>
           </div>
         </div>
       )}
@@ -1052,16 +1228,17 @@ const ReviewsPage = ({ branch, showToast }) => {
       <div className="bg-white rounded-xl shadow-sm overflow-hidden">
         <table className="w-full">
           <thead className="bg-gray-50"><tr><th className="px-6 py-3 text-left">Неделя</th><th className="px-6 py-3 text-left">План</th><th className="px-6 py-3 text-left">Факт</th><th className="px-6 py-3 text-left">Выполнение %</th></tr></thead>
-          <tbody className="divide-y">{history.map((item, i) => (<tr key={i}><td className="px-6 py-4">{item['Неделя']}</td><td className="px-6 py-4">{item['План отзывов']}</td><td className="px-6 py-4">{item['Факт отзывов']}</td><td className="px-6 py-4"><span className={`px-2 py-1 rounded text-sm ${item['Выполнение недели %'] >= 100 ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>{item['Выполнение недели %']}%</span></td></tr>))}</tbody>
+          <tbody className="divide-y">{history.map((item, i) => (<tr key={i}><td className="px-6 py-4">{item['Неделя']}</td><td className="px-6 py-4">13</td><td className="px-6 py-4">{item['Факт отзывов']}</td><td className="px-6 py-4"><span className={`px-2 py-1 rounded text-sm ${item['Выполнение недели %'] >= 100 ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>{item['Выполнение недели %']}%</span></td></tr>))}</tbody>
         </table>
       </div>
     </div>
   );
 };
 
-// FORM 8: СВОДКА ПО ФИЛИАЛУ
+// ==================== FORM 8: СВОДКА (ОБНОВЛЕНО v3.1.0) ====================
+
 const BranchSummaryPage = ({ branch, showToast }) => {
-  const [summary, setSummary] = useState({manager: branch.manager || '', month: '', morning_events_goal: '', field_visits_goal: '', one_on_one_goal: '', weekly_reports_goal: '', master_plans_goal: '', reviews_goal: '', new_employees_goal: ''});
+  const [summary, setSummary] = useState({manager: branch.manager || '', month: getCurrentMonth()});
   const [loading, setLoading] = useState(false);
   const [history, setHistory] = useState([]);
 
@@ -1069,7 +1246,7 @@ const BranchSummaryPage = ({ branch, showToast }) => {
     e.preventDefault();
     setLoading(true);
     try {
-      await api.request(`/branch-summary/${branch.name}`, { method: 'POST', body: JSON.stringify({...summary, morning_events_goal: parseInt(summary.morning_events_goal), field_visits_goal: parseInt(summary.field_visits_goal), one_on_one_goal: parseInt(summary.one_on_one_goal), weekly_reports_goal: parseInt(summary.weekly_reports_goal), master_plans_goal: parseInt(summary.master_plans_goal), reviews_goal: parseInt(summary.reviews_goal), new_employees_goal: parseInt(summary.new_employees_goal)}) });
+      await api.request(`/branch-summary/${branch.name}`, { method: 'POST', body: JSON.stringify(summary) });
       showToast('Сводка успешно сформирована!');
       loadHistory();
     } catch (err) { showToast(err.message, 'error'); } finally { setLoading(false); }
@@ -1080,18 +1257,37 @@ const BranchSummaryPage = ({ branch, showToast }) => {
 
   return (
     <div className="space-y-6">
+      <InstructionBanner title="Сводка по филиалу">
+        <p>Автоматический саммари по всем метрикам с процентами выполнения.</p>
+        <p>Цели фиксированные для всех филиалов: Утренние мероприятия (16), Полевые выходы (4), 1-on-1 (6), Еженедельные отчёты (4), Планы мастеров (10), Отзывы (60), Новые сотрудники (10).</p>
+      </InstructionBanner>
+
       <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl shadow-sm">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <FormInput label="Управляющий" required><input type="text" value={summary.manager} onChange={(e) => setSummary({...summary, manager: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
-          <FormInput label="Месяц" required><select value={summary.month} onChange={(e) => setSummary({...summary, month: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required><option value="">Выбрать...</option>{['Январь 2026', 'Февраль 2026', 'Март 2026', 'Апрель 2026', 'Май 2026', 'Июнь 2026', 'Июль 2026', 'Август 2026', 'Сентябрь 2026', 'Октябрь 2026', 'Ноябрь 2026', 'Декабрь 2026'].map(m => <option key={m} value={m}>{m}</option>)}</select></FormInput>
-          <FormInput label="Цель: Утренние мероприятия" required><input type="number" value={summary.morning_events_goal} onChange={(e) => setSummary({...summary, morning_events_goal: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
-          <FormInput label="Цель: Полевые выходы" required><input type="number" value={summary.field_visits_goal} onChange={(e) => setSummary({...summary, field_visits_goal: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
-          <FormInput label="Цель: One-on-One" required><input type="number" value={summary.one_on_one_goal} onChange={(e) => setSummary({...summary, one_on_one_goal: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
-          <FormInput label="Цель: Еженедельные отчёты" required><input type="number" value={summary.weekly_reports_goal} onChange={(e) => setSummary({...summary, weekly_reports_goal: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
-          <FormInput label="Цель: Планы мастеров" required><input type="number" value={summary.master_plans_goal} onChange={(e) => setSummary({...summary, master_plans_goal: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
-          <FormInput label="Цель: Отзывы" required><input type="number" value={summary.reviews_goal} onChange={(e) => setSummary({...summary, reviews_goal: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
-          <FormInput label="Цель: Новые сотрудники" required><input type="number" value={summary.new_employees_goal} onChange={(e) => setSummary({...summary, new_employees_goal: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
+          <FormInput label="Управляющий" required>
+            <input type="text" value={summary.manager} onChange={(e) => setSummary({...summary, manager: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required />
+          </FormInput>
+          <FormInput label="Месяц" required>
+            <select value={summary.month} onChange={(e) => setSummary({...summary, month: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required>
+              <option value="">Выбрать...</option>
+              {['Январь 2026', 'Февраль 2026', 'Март 2026', 'Апрель 2026', 'Май 2026', 'Июнь 2026', 'Июль 2026', 'Август 2026', 'Сентябрь 2026', 'Октябрь 2026', 'Ноябрь 2026', 'Декабрь 2026'].map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </FormInput>
         </div>
+        
+        <div className="mt-4 p-4 bg-blue-50 rounded-lg">
+          <h4 className="font-semibold mb-2">Фиксированные цели для всех филиалов:</h4>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+            <div>Утренние: <strong>{BRANCH_GOALS.morning_events}</strong></div>
+            <div>Полевые: <strong>{BRANCH_GOALS.field_visits}</strong></div>
+            <div>1-on-1: <strong>{BRANCH_GOALS.one_on_one}</strong></div>
+            <div>Еженедельные: <strong>{BRANCH_GOALS.weekly_reports}</strong></div>
+            <div>Планы: <strong>{BRANCH_GOALS.master_plans}</strong></div>
+            <div>Отзывы: <strong>{BRANCH_GOALS.reviews}</strong></div>
+            <div>Новички: <strong>{BRANCH_GOALS.new_employees}</strong></div>
+          </div>
+        </div>
+
         <button type="submit" disabled={loading} className="mt-4 px-8 py-3 bg-blue-600 text-white rounded-lg">{loading ? 'Сформировать сводку' : 'Сформировать'}</button>
       </form>
 
@@ -1146,6 +1342,8 @@ const App = () => {
 
   return <BarberCRM branch={branch} token={token} onLogout={handleLogout} />;
 };
+
+// ==================== RENDER ====================
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);
