@@ -14,7 +14,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="BarberCRM API", version="3.0.0")
+app = FastAPI(title="BarberCRM API", version="3.0.1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -58,6 +58,8 @@ def get_sheets_client():
     except Exception as e:
         logger.error(f"Ошибка авторизации: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ============= МОДЕЛИ =============
 
 class BranchRegister(BaseModel):
     name: str
@@ -151,14 +153,19 @@ class BranchSummary(BaseModel):
     reviews_goal: int = Field(..., ge=0)
     new_employees_goal: int = Field(..., ge=0)
 
+# ============= УТИЛИТЫ =============
+
 def ensure_sheet_exists(client, spreadsheet_id: str, sheet_name: str, headers: List[str]):
     try:
         spreadsheet = client.open_by_key(spreadsheet_id)
         try:
             worksheet = spreadsheet.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound:
+            logger.info(f"Создание листа: {sheet_name}")
             worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
             worksheet.append_row(headers)
+            return worksheet
+        
         if not worksheet.row_values(1):
             worksheet.append_row(headers)
         return worksheet
@@ -167,7 +174,23 @@ def ensure_sheet_exists(client, spreadsheet_id: str, sheet_name: str, headers: L
         raise HTTPException(status_code=500, detail=str(e))
 
 def insert_row_at_top(worksheet, data: List[Any]):
-    worksheet.insert_row(data, index=2)
+    """ИСПРАВЛЕНО: Конвертируем все значения в строки/числа"""
+    try:
+        # Конвертируем данные в правильный формат
+        converted_data = []
+        for item in data:
+            if item is None:
+                converted_data.append("")
+            elif isinstance(item, (int, float)):
+                converted_data.append(item)
+            else:
+                converted_data.append(str(item))
+        
+        worksheet.insert_row(converted_data, index=2)
+        logger.info(f"Данные добавлены: {converted_data}")
+    except Exception as e:
+        logger.error(f"Ошибка вставки: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка записи: {str(e)}")
 
 def get_branch_by_name(client, name: str) -> Optional[Dict]:
     try:
@@ -181,9 +204,11 @@ def get_branch_by_name(client, name: str) -> Optional[Dict]:
     except:
         return None
 
+# ============= API =============
+
 @app.get("/")
 def read_root():
-    return {"message": "Barber CRM API v3.0", "status": "online"}
+    return {"message": "Barber CRM API v3.0.1", "status": "online"}
 
 @app.get("/health")
 def health_check():
@@ -212,6 +237,8 @@ def login(request: LoginRequest):
         raise HTTPException(status_code=401, detail="Неверный пароль")
     return {"success": True, "token": branch.get('Токен'), "branch": {"name": branch.get('Название'), "address": branch.get('Адрес'), "manager": branch.get('Управляющий')}}
 
+# ============= УТРЕННИЕ МЕРОПРИЯТИЯ =============
+
 @app.post("/morning-events/{branch_name}")
 def submit_morning_events(branch_name: str, events: List[MorningEvent]):
     client = get_sheets_client()
@@ -219,8 +246,19 @@ def submit_morning_events(branch_name: str, events: List[MorningEvent]):
     headers = ["Дата отправки", "Неделя", "Дата", "Тип мероприятия", "Участники", "Эффективность", "Комментарий"]
     worksheet = ensure_sheet_exists(client, SPREADSHEET_ID, sheet_name, headers)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     for event in events:
-        insert_row_at_top(worksheet, [timestamp, event.week, event.date, event.event_type, event.participants, event.efficiency, event.comment or ""])
+        row = [
+            timestamp,
+            int(event.week),
+            str(event.date),
+            str(event.event_type),
+            int(event.participants),
+            int(event.efficiency),
+            str(event.comment) if event.comment else ""
+        ]
+        insert_row_at_top(worksheet, row)
+    
     return {"success": True, "message": f"Добавлено {len(events)} записей"}
 
 @app.get("/morning-events/{branch_name}")
@@ -233,6 +271,8 @@ def get_morning_events(branch_name: str):
     except:
         return {"success": True, "data": []}
 
+# ============= ПОЛЕВЫЕ ВЫХОДЫ =============
+
 @app.post("/field-visits/{branch_name}")
 def submit_field_visits(branch_name: str, visits: List[FieldVisit]):
     client = get_sheets_client()
@@ -240,9 +280,27 @@ def submit_field_visits(branch_name: str, visits: List[FieldVisit]):
     headers = ["Дата отправки", "Дата", "Имя мастера", "Качество стрижек", "Качество сервиса", "Доп. услуги (комментарий)", "Доп. услуги (оценка)", "Косметика (комментарий)", "Косметика (оценка)", "Стандарты (комментарий)", "Стандарты (оценка)", "Выявление ошибок", "Общая оценка", "Дата следующей проверки"]
     worksheet = ensure_sheet_exists(client, SPREADSHEET_ID, sheet_name, headers)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     for visit in visits:
         total_score = round((visit.haircut_quality + visit.service_quality + visit.additional_services_rating + visit.cosmetics_rating + visit.standards_rating) / 5, 1)
-        insert_row_at_top(worksheet, [timestamp, visit.date, visit.master_name, visit.haircut_quality, visit.service_quality, visit.additional_services_comment, visit.additional_services_rating, visit.cosmetics_comment, visit.cosmetics_rating, visit.standards_comment, visit.standards_rating, visit.errors_comment, total_score, visit.next_check_date or ""])
+        row = [
+            timestamp,
+            str(visit.date),
+            str(visit.master_name),
+            int(visit.haircut_quality),
+            int(visit.service_quality),
+            str(visit.additional_services_comment),
+            int(visit.additional_services_rating),
+            str(visit.cosmetics_comment),
+            int(visit.cosmetics_rating),
+            str(visit.standards_comment),
+            int(visit.standards_rating),
+            str(visit.errors_comment),
+            float(total_score),
+            str(visit.next_check_date) if visit.next_check_date else ""
+        ]
+        insert_row_at_top(worksheet, row)
+    
     return {"success": True, "message": f"Добавлено {len(visits)} проверок"}
 
 @app.get("/field-visits/{branch_name}")
@@ -255,6 +313,8 @@ def get_field_visits(branch_name: str):
     except:
         return {"success": True, "data": []}
 
+# ============= ONE-ON-ONE =============
+
 @app.post("/one-on-one/{branch_name}")
 def submit_one_on_one(branch_name: str, meetings: List[OneOnOneMeeting]):
     client = get_sheets_client()
@@ -262,8 +322,20 @@ def submit_one_on_one(branch_name: str, meetings: List[OneOnOneMeeting]):
     headers = ["Дата отправки", "Дата встречи", "Имя мастера", "Цель встречи", "Результаты", "План развития", "Показатель", "Дата следующей встречи"]
     worksheet = ensure_sheet_exists(client, SPREADSHEET_ID, sheet_name, headers)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     for meeting in meetings:
-        insert_row_at_top(worksheet, [timestamp, meeting.date, meeting.master_name, meeting.goal, meeting.results, meeting.development_plan, meeting.indicator, meeting.next_meeting_date or ""])
+        row = [
+            timestamp,
+            str(meeting.date),
+            str(meeting.master_name),
+            str(meeting.goal),
+            str(meeting.results),
+            str(meeting.development_plan),
+            str(meeting.indicator),
+            str(meeting.next_meeting_date) if meeting.next_meeting_date else ""
+        ]
+        insert_row_at_top(worksheet, row)
+    
     return {"success": True, "message": f"Добавлено {len(meetings)} встреч"}
 
 @app.get("/one-on-one/{branch_name}")
@@ -276,6 +348,8 @@ def get_one_on_one(branch_name: str):
     except:
         return {"success": True, "data": []}
 
+# ============= ЕЖЕНЕДЕЛЬНЫЕ ПОКАЗАТЕЛИ =============
+
 @app.post("/weekly-metrics/{branch_name}")
 def submit_weekly_metrics(branch_name: str, metrics: WeeklyMetrics):
     client = get_sheets_client()
@@ -283,10 +357,25 @@ def submit_weekly_metrics(branch_name: str, metrics: WeeklyMetrics):
     headers = ["Дата отправки", "Период", "Средний чек (план)", "Средний чек (факт)", "Косметика (план)", "Косметика (факт)", "Доп. услуги (план)", "Доп. услуги (факт)", "Выполнение среднего чека %", "Выполнение косметики %", "Выполнение доп. услуг %"]
     worksheet = ensure_sheet_exists(client, SPREADSHEET_ID, sheet_name, headers)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     avg_perf = round((metrics.average_check_fact / metrics.average_check_plan * 100), 1) if metrics.average_check_plan > 0 else 0
     cosm_perf = round((metrics.cosmetics_fact / metrics.cosmetics_plan * 100), 1) if metrics.cosmetics_plan > 0 else 0
     add_perf = round((metrics.additional_services_fact / metrics.additional_services_plan * 100), 1) if metrics.additional_services_plan > 0 else 0
-    insert_row_at_top(worksheet, [timestamp, metrics.period, metrics.average_check_plan, metrics.average_check_fact, metrics.cosmetics_plan, metrics.cosmetics_fact, metrics.additional_services_plan, metrics.additional_services_fact, avg_perf, cosm_perf, add_perf])
+    
+    row = [
+        timestamp,
+        str(metrics.period),
+        float(metrics.average_check_plan),
+        float(metrics.average_check_fact),
+        float(metrics.cosmetics_plan),
+        float(metrics.cosmetics_fact),
+        float(metrics.additional_services_plan),
+        float(metrics.additional_services_fact),
+        float(avg_perf),
+        float(cosm_perf),
+        float(add_perf)
+    ]
+    insert_row_at_top(worksheet, row)
     return {"success": True}
 
 @app.get("/weekly-metrics/{branch_name}")
@@ -299,6 +388,8 @@ def get_weekly_metrics(branch_name: str):
     except:
         return {"success": True, "data": []}
 
+# ============= АДАПТАЦИЯ НОВИЧКОВ =============
+
 @app.post("/newbie-adaptation/{branch_name}")
 def submit_newbie_adaptation(branch_name: str, adaptations: List[NewbieAdaptation]):
     client = get_sheets_client()
@@ -306,8 +397,22 @@ def submit_newbie_adaptation(branch_name: str, adaptations: List[NewbieAdaptatio
     headers = ["Дата отправки", "Дата начала", "Имя новичка", "Практика стрижек", "Стандарты сервиса", "Гигиена и санитария", "Доп. услуги", "Продажа косметики", "Основы iClient", "Статус адаптации"]
     worksheet = ensure_sheet_exists(client, SPREADSHEET_ID, sheet_name, headers)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     for adaptation in adaptations:
-        insert_row_at_top(worksheet, [timestamp, adaptation.start_date, adaptation.name, adaptation.haircut_practice, adaptation.service_standards, adaptation.hygiene_sanitation, adaptation.additional_services, adaptation.cosmetics_sales, adaptation.iclient_basics, adaptation.status])
+        row = [
+            timestamp,
+            str(adaptation.start_date),
+            str(adaptation.name),
+            str(adaptation.haircut_practice),
+            str(adaptation.service_standards),
+            str(adaptation.hygiene_sanitation),
+            str(adaptation.additional_services),
+            str(adaptation.cosmetics_sales),
+            str(adaptation.iclient_basics),
+            str(adaptation.status)
+        ]
+        insert_row_at_top(worksheet, row)
+    
     return {"success": True, "message": f"Добавлено {len(adaptations)} записей"}
 
 @app.get("/newbie-adaptation/{branch_name}")
@@ -320,6 +425,8 @@ def get_newbie_adaptation(branch_name: str):
     except:
         return {"success": True, "data": []}
 
+# ============= ПЛАНЫ МАСТЕРОВ =============
+
 @app.post("/master-plans/{branch_name}")
 def submit_master_plans(branch_name: str, plans: List[MasterPlan]):
     client = get_sheets_client()
@@ -327,12 +434,32 @@ def submit_master_plans(branch_name: str, plans: List[MasterPlan]):
     headers = ["Дата отправки", "Месяц", "Имя мастера", "Средний чек (план)", "Средний чек (факт)", "Доп. услуги кол-во (план)", "Доп. услуги кол-во (факт)", "Объем продаж (план)", "Объем продаж (факт)", "Зарплата (план)", "Зарплата (факт)", "Выполнение среднего чека %", "Выполнение доп. услуг %", "Выполнение продаж %", "Выполнение зарплаты %"]
     worksheet = ensure_sheet_exists(client, SPREADSHEET_ID, sheet_name, headers)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     for plan in plans:
         avg_perf = round((plan.average_check_fact / plan.average_check_plan * 100), 1) if plan.average_check_plan > 0 else 0
         serv_perf = round((plan.additional_services_fact / plan.additional_services_plan * 100), 1) if plan.additional_services_plan > 0 else 0
         sales_perf = round((plan.sales_fact / plan.sales_plan * 100), 1) if plan.sales_plan > 0 else 0
         sal_perf = round((plan.salary_fact / plan.salary_plan * 100), 1) if plan.salary_plan > 0 else 0
-        insert_row_at_top(worksheet, [timestamp, plan.month, plan.master_name, plan.average_check_plan, plan.average_check_fact, plan.additional_services_plan, plan.additional_services_fact, plan.sales_plan, plan.sales_fact, plan.salary_plan, plan.salary_fact, avg_perf, serv_perf, sales_perf, sal_perf])
+        
+        row = [
+            timestamp,
+            str(plan.month),
+            str(plan.master_name),
+            float(plan.average_check_plan),
+            float(plan.average_check_fact),
+            int(plan.additional_services_plan),
+            int(plan.additional_services_fact),
+            float(plan.sales_plan),
+            float(plan.sales_fact),
+            float(plan.salary_plan),
+            float(plan.salary_fact),
+            float(avg_perf),
+            float(serv_perf),
+            float(sales_perf),
+            float(sal_perf)
+        ]
+        insert_row_at_top(worksheet, row)
+    
     return {"success": True, "message": f"Добавлено {len(plans)} планов"}
 
 @app.get("/master-plans/{branch_name}")
@@ -345,6 +472,8 @@ def get_master_plans(branch_name: str):
     except:
         return {"success": True, "data": []}
 
+# ============= ОТЗЫВЫ =============
+
 @app.post("/reviews/{branch_name}")
 def submit_reviews(branch_name: str, review: Reviews):
     client = get_sheets_client()
@@ -353,7 +482,17 @@ def submit_reviews(branch_name: str, review: Reviews):
     worksheet = ensure_sheet_exists(client, SPREADSHEET_ID, sheet_name, headers)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     week_perf = round((review.fact / review.plan * 100), 1) if review.plan > 0 else 0
-    insert_row_at_top(worksheet, [timestamp, review.week, review.manager_name, review.plan, review.fact, review.monthly_target, week_perf])
+    
+    row = [
+        timestamp,
+        str(review.week),
+        str(review.manager_name),
+        int(review.plan),
+        int(review.fact),
+        int(review.monthly_target),
+        float(week_perf)
+    ]
+    insert_row_at_top(worksheet, row)
     return {"success": True}
 
 @app.get("/reviews/{branch_name}")
@@ -366,11 +505,14 @@ def get_reviews(branch_name: str):
     except:
         return {"success": True, "data": []}
 
+# ============= СВОДКА =============
+
 @app.post("/branch-summary/{branch_name}")
 def submit_branch_summary(branch_name: str, summary: BranchSummary):
     client = get_sheets_client()
     sheet_name = f"Сводка - {branch_name}"
     spreadsheet = client.open_by_key(SPREADSHEET_ID)
+    
     def count_records(sname: str, month: str) -> int:
         try:
             ws = spreadsheet.worksheet(sname)
@@ -378,9 +520,11 @@ def submit_branch_summary(branch_name: str, summary: BranchSummary):
             return len([r for r in records if month.lower() in str(r).lower()])
         except:
             return 0
+    
     headers = ["Дата отправки", "Филиал", "Управляющий", "Месяц", "Метрика", "Текущее количество", "Цель на месяц", "Выполнение %"]
     worksheet = ensure_sheet_exists(client, SPREADSHEET_ID, sheet_name, headers)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     metrics = [
         ("Утренние мероприятия", count_records(f"Утренние мероприятия - {branch_name}", summary.month), summary.morning_events_goal),
         ("Полевые выходы", count_records(f"Полевые выходы - {branch_name}", summary.month), summary.field_visits_goal),
@@ -390,9 +534,21 @@ def submit_branch_summary(branch_name: str, summary: BranchSummary):
         ("Отзывы", count_records(f"Отзывы - {branch_name}", summary.month), summary.reviews_goal),
         ("Новые сотрудники", count_records(f"Адаптация новичков - {branch_name}", summary.month), summary.new_employees_goal),
     ]
+    
     for metric_name, current, goal in metrics:
         performance = round((current / goal * 100), 1) if goal > 0 else 0
-        insert_row_at_top(worksheet, [timestamp, branch_name, summary.manager, summary.month, metric_name, current, goal, performance])
+        row = [
+            timestamp,
+            str(branch_name),
+            str(summary.manager),
+            str(summary.month),
+            str(metric_name),
+            int(current),
+            int(goal),
+            float(performance)
+        ]
+        insert_row_at_top(worksheet, row)
+    
     return {"success": True}
 
 @app.get("/branch-summary/{branch_name}")
