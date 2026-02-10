@@ -4,7 +4,7 @@ const { useState, useEffect, useRef } = React;
 // ==================== CONFIG ====================
 const API_BASE_URL = 'http://166.1.201.124:8000';
 
-// НОВОЕ v3.1.0: Фиксированные цели для каждого филиала
+// Фиксированные цели для каждого филиала
 const BRANCH_GOALS = {
   morning_events: 16,
   field_visits: 4,
@@ -60,7 +60,7 @@ const getCurrentMonth = () => {
   return `${months[now.getMonth()]} ${now.getFullYear()}`;
 };
 
-// ==================== ICONS ====================
+// ==================== ICONS (ОБНОВЛЕНО - больше разных иконок) ====================
 const Icons = {
   Plus: ({className}) => (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
@@ -91,6 +91,40 @@ const Icons = {
   ),
   Info: ({className}) => (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+  ),
+  ChevronDown: ({className}) => (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+  ),
+  ChevronUp: ({className}) => (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+  ),
+  // НОВЫЕ ИКОНКИ для разных вкладок
+  Sunrise: ({className}) => (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+  ),
+  Clipboard: ({className}) => (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>
+  ),
+  UserGroup: ({className}) => (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+  ),
+  TrendingUp: ({className}) => (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
+  ),
+  AcademicCap: ({className}) => (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5zm0 0l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14zm-4 6v-7.5l4-2.222" /></svg>
+  ),
+  Target: ({className}) => (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+  ),
+  ChatAlt: ({className}) => (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
+  ),
+  ClipboardList: ({className}) => (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
+  ),
+  Dashboard: ({className}) => (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 16a1 1 0 011-1h4a1 1 0 011 1v3a1 1 0 01-1 1H5a1 1 0 01-1-1v-3zM14 13a1 1 0 011-1h4a1 1 0 011 1v6a1 1 0 01-1 1h-4a1 1 0 01-1-1v-6z" /></svg>
   )
 };
 
@@ -155,21 +189,35 @@ const Toast = ({ message, type = 'success', onClose }) => {
   );
 };
 
-// НОВОЕ v3.1.0: Компонент с инструкцией
-const InstructionBanner = ({ title, children }) => (
-  <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-6 rounded-r-lg">
-    <div className="flex items-start">
-      <Icons.Info className="w-5 h-5 text-blue-500 mr-3 mt-0.5 flex-shrink-0" />
-      <div className="flex-1">
-        <h4 className="font-semibold text-blue-900 mb-2">{title}</h4>
-        <div className="text-sm text-blue-800 space-y-1">
+// ОБНОВЛЕНО v3.1.1: Компонент с инструкцией - теперь СВОРАЧИВАЕМЫЙ
+const InstructionBanner = ({ title, children, defaultOpen = false }) => {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
+  
+  return (
+    <div className="bg-blue-50 border-l-4 border-blue-500 rounded-r-lg overflow-hidden mb-6">
+      <button 
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between p-4 hover:bg-blue-100 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <Icons.Info className="w-5 h-5 text-blue-500 flex-shrink-0" />
+          <h4 className="font-semibold text-blue-900">{title}</h4>
+        </div>
+        {isOpen ? (
+          <Icons.ChevronUp className="w-5 h-5 text-blue-600" />
+        ) : (
+          <Icons.ChevronDown className="w-5 h-5 text-blue-600" />
+        )}
+      </button>
+      
+      {isOpen && (
+        <div className="px-4 pb-4 text-sm text-blue-800 space-y-2 animate-fade-in">
           {children}
         </div>
-      </div>
+      )}
     </div>
-  </div>
-);
-
+  );
+};
 
 // ==================== AUTH ====================
 
@@ -244,7 +292,7 @@ const AuthPage = ({ onAuth }) => {
           <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-2">
             BarberCRM
           </h1>
-          <p className="text-gray-600">v3.1.0 FINAL - Все обновления</p>
+          <p className="text-gray-600">v3.1.1 FINAL - Исправления</p>
         </div>
 
         <div className="flex gap-2 mb-6 p-1 bg-gray-100 rounded-lg">
@@ -339,16 +387,17 @@ const BarberCRM = ({ branch, token, onLogout }) => {
     setToast({ message, type });
   };
 
+  // ОБНОВЛЕНО v3.1.1: Разные иконки для каждой вкладки
   const menuItems = [
-    { id: 'dashboard', label: 'Дашборд', icon: Icons.Chart },
-    { id: 'morning-events', label: 'Утренние мероприятия', icon: Icons.Calendar },
-    { id: 'field-visits', label: 'Полевые выходы', icon: Icons.Users },
-    { id: 'one-on-one', label: 'One-on-One', icon: Icons.Users },
-    { id: 'weekly-metrics', label: 'Еженедельные показатели', icon: Icons.Chart },
-    { id: 'newbie-adaptation', label: 'Адаптация новичков', icon: Icons.Users },
-    { id: 'master-plans', label: 'Планы мастеров', icon: Icons.Chart },
-    { id: 'reviews', label: 'Отзывы', icon: Icons.Star },
-    { id: 'branch-summary', label: 'Сводка', icon: Icons.Chart },
+    { id: 'dashboard', label: 'Дашборд', icon: Icons.Dashboard },
+    { id: 'morning-events', label: 'Утренние мероприятия', icon: Icons.Sunrise },
+    { id: 'field-visits', label: 'Полевые выходы', icon: Icons.Clipboard },
+    { id: 'one-on-one', label: 'One-on-One', icon: Icons.UserGroup },
+    { id: 'weekly-metrics', label: 'Еженедельные показатели', icon: Icons.TrendingUp },
+    { id: 'newbie-adaptation', label: 'Адаптация новичков', icon: Icons.AcademicCap },
+    { id: 'master-plans', label: 'Планы мастеров', icon: Icons.Target },
+    { id: 'reviews', label: 'Отзывы', icon: Icons.ChatAlt },
+    { id: 'branch-summary', label: 'Сводка', icon: Icons.ClipboardList },
   ];
 
   return (
@@ -406,7 +455,7 @@ const BarberCRM = ({ branch, token, onLogout }) => {
 
       {/* Main content */}
       <div className="flex-1 overflow-auto">
-        {/* Фоновый PNG логотип с прозрачностью */}
+        {/* Фоновый PNG логотип с прозрачностью 10% */}
         <div className="absolute inset-0 pointer-events-none" style={{
           backgroundImage: 'url(/logo.png)',
           backgroundRepeat: 'no-repeat',
@@ -439,7 +488,7 @@ const BarberCRM = ({ branch, token, onLogout }) => {
   );
 };
 
-// ==================== DASHBOARD (ОБНОВЛЕНО v3.1.0) ====================
+// ==================== DASHBOARD ====================
 
 const Dashboard = ({ branch }) => {
   const [summary, setSummary] = useState(null);
@@ -452,7 +501,6 @@ const Dashboard = ({ branch }) => {
         setSummary(data.summary);
       } catch (err) {
         console.error('Ошибка загрузки сводки:', err);
-        // Заглушка при ошибке
         setSummary({
           morning_events: { current: 0, goal: BRANCH_GOALS.morning_events, percentage: 0, label: "Утренние мероприятия" },
           field_visits: { current: 0, goal: BRANCH_GOALS.field_visits, percentage: 0, label: "Полевые выходы" },
@@ -479,11 +527,10 @@ const Dashboard = ({ branch }) => {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {/* Утренние мероприятия */}
         <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-gray-600">Утренних мероприятий</h3>
-            <Icons.Calendar className="w-5 h-5 text-blue-600" />
+            <Icons.Sunrise className="w-5 h-5 text-blue-600" />
           </div>
           <p className="text-3xl font-bold text-gray-800">{summary.morning_events?.current || 0}</p>
           <div className="mt-2 flex items-center justify-between">
@@ -494,11 +541,10 @@ const Dashboard = ({ branch }) => {
           </div>
         </div>
 
-        {/* Полевых выходов */}
         <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-gray-600">Полевых выходов</h3>
-            <Icons.Users className="w-5 h-5 text-blue-600" />
+            <Icons.Clipboard className="w-5 h-5 text-blue-600" />
           </div>
           <p className="text-3xl font-bold text-gray-800">{summary.field_visits?.current || 0}</p>
           <div className="mt-2 flex items-center justify-between">
@@ -509,11 +555,10 @@ const Dashboard = ({ branch }) => {
           </div>
         </div>
 
-        {/* One-on-One */}
         <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-gray-600">One-on-One</h3>
-            <Icons.Users className="w-5 h-5 text-blue-600" />
+            <Icons.UserGroup className="w-5 h-5 text-blue-600" />
           </div>
           <p className="text-3xl font-bold text-gray-800">{summary.one_on_one?.current || 0}</p>
           <div className="mt-2 flex items-center justify-between">
@@ -524,11 +569,10 @@ const Dashboard = ({ branch }) => {
           </div>
         </div>
 
-        {/* Планы мастеров */}
         <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-gray-600">Планы мастеров</h3>
-            <Icons.Chart className="w-5 h-5 text-blue-600" />
+            <Icons.Target className="w-5 h-5 text-blue-600" />
           </div>
           <p className="text-3xl font-bold text-gray-800">{summary.master_plans?.current || 0}</p>
           <div className="mt-2 flex items-center justify-between">
@@ -540,7 +584,6 @@ const Dashboard = ({ branch }) => {
         </div>
       </div>
 
-      {/* Дополнительные метрики */}
       <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-6 border border-blue-100">
         <h3 className="text-lg font-semibold text-gray-800 mb-4">Дополнительные показатели</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -582,7 +625,6 @@ const MorningEventsPage = ({ branch, showToast }) => {
     const newEvents = [...events];
     newEvents[index][field] = value;
     
-    // Автоматический расчет недели при изменении даты
     if (field === 'date' && value) {
       newEvents[index]['week'] = getWeekNumber(value);
     }
@@ -633,12 +675,14 @@ const MorningEventsPage = ({ branch, showToast }) => {
   return (
     <div className="space-y-6">
       <InstructionBanner title="Инструкция по заполнению отчёта «Утренние мероприятия»">
-        <p>В каждую строку отчёта заносите отдельное мероприятие, проведённое утром.</p>
-        <p>• <strong>Неделя</strong> — рассчитывается автоматически по дате</p>
-        <p>• <strong>Тип мероприятия</strong> — запуск дня, мотивационная встреча, обсуждение целей, командная активность</p>
+        <p>В каждую строку отчёта заносите отдельное мероприятие, проведённое утром (до открытия или перед стартом рабочего дня).</p>
+        <p className="mt-2"><strong>Заполняйте следующие поля:</strong></p>
+        <p>• <strong>Неделя</strong> — номер текущей недели (рассчитывается автоматически)</p>
+        <p>• <strong>Дата</strong> — день проведения мероприятия</p>
+        <p>• <strong>Тип мероприятия</strong> — формат или название активности (например: запуск дня, мотивационная встреча, обсуждение целей, командная активность)</p>
         <p>• <strong>Участники</strong> — количество присутствовавших сотрудников</p>
-        <p>• <strong>Эффективность (1-5)</strong> — оценка по ощущениям или обратной связи</p>
-        <p>• <strong>Комментарий</strong> — итоги, настроение, особенности</p>
+        <p>• <strong>Эффективность (1-5)</strong> — оценка эффективности мероприятия по пятибалльной шкале (где 5 — максимум, 1 — низкая отдача), можно выставлять по ощущениям или собирая обратную связь</p>
+        <p>• <strong>Комментарий</strong> — коротко опишите итоги, настроение, особенности (что обсуждали, что удалось, кто отсутствовал, результаты)</p>
       </InstructionBanner>
 
       <div className="flex gap-4 mb-6">
@@ -686,13 +730,13 @@ const MorningEventsPage = ({ branch, showToast }) => {
                   />
                 </FormInput>
 
-                <FormInput label="Тип мероприятия" tooltip="Например: запуск дня, срез, допы, улучшения" required>
+                <FormInput label="Тип мероприятия" required>
                   <input
                     type="text"
                     value={event.event_type}
                     onChange={(e) => updateEvent(index, 'event_type', e.target.value)}
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="запуск дня, срез, допы..."
+                    placeholder="запуск дня, мотивационная встреча..."
                     required
                   />
                 </FormInput>
@@ -722,7 +766,7 @@ const MorningEventsPage = ({ branch, showToast }) => {
                   </select>
                 </FormInput>
 
-                <FormInput label="Комментарий" tooltip="Итоги, настроение, особенности">
+                <FormInput label="Комментарий">
                   <textarea
                     value={event.comment}
                     onChange={(e) => updateEvent(index, 'comment', e.target.value)}
@@ -788,7 +832,7 @@ const MorningEventsPage = ({ branch, showToast }) => {
   );
 };
 
-// ==================== FORM 2: ПОЛЕВЫЕ ВЫХОДЫ ====================
+// ==================== FORM 2: ПОЛЕВЫЕ ВЫХОДЫ (ИСПРАВЛЕН БАГ С ОЦЕНКОЙ) ====================
 
 const FieldVisitsPage = ({ branch, showToast }) => {
   const [view, setView] = useState('form');
@@ -799,7 +843,11 @@ const FieldVisitsPage = ({ branch, showToast }) => {
   const addVisit = () => { setVisits([...visits, {date: '', master_name: '', haircut_quality: 5, service_quality: 5, additional_services_comment: '', additional_services_rating: 5, cosmetics_comment: '', cosmetics_rating: 5, standards_comment: '', standards_rating: 5, errors_comment: '', next_check_date: ''}]); };
   const removeVisit = (index) => { setVisits(visits.filter((_, i) => i !== index)); };
   const updateVisit = (index, field, value) => { const newVisits = [...visits]; newVisits[index][field] = value; setVisits(newVisits); };
-  const calculateAverage = (visit) => { return ((visit.haircut_quality + visit.service_quality + visit.additional_services_rating + visit.cosmetics_rating + visit.standards_rating) / 5).toFixed(1); };
+  
+  // ИСПРАВЛЕНО v3.1.1: Правильный расчет среднего (делим на 5, а не суммируем)
+  const calculateAverage = (visit) => { 
+    return ((visit.haircut_quality + visit.service_quality + visit.additional_services_rating + visit.cosmetics_rating + visit.standards_rating) / 5).toFixed(1); 
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -818,8 +866,14 @@ const FieldVisitsPage = ({ branch, showToast }) => {
   return (
     <div className="space-y-6">
       <InstructionBanner title="Полевые выходы">
-        <p>Проверка работы мастеров на местах. Общая оценка рассчитывается автоматически как среднее значение из 5 критериев.</p>
-        <p>Оценивайте по 10-балльной шкале каждый критерий и оставляйте комментарии.</p>
+        <p>Проверка работы мастеров на местах.</p>
+        <p className="mt-2"><strong>Общая оценка рассчитывается автоматически</strong> как среднее значение из 5 критериев по 10-балльной шкале:</p>
+        <p>• Качество стрижек (1-10)</p>
+        <p>• Качество сервиса (1-10)</p>
+        <p>• Предложение доп. услуг (1-10)</p>
+        <p>• Предложение косметики (1-10)</p>
+        <p>• Соответствие стандартам (1-10)</p>
+        <p className="mt-2">Оставляйте комментарии к каждому критерию для детальной обратной связи.</p>
       </InstructionBanner>
 
       <div className="flex gap-4 mb-6">
@@ -834,7 +888,7 @@ const FieldVisitsPage = ({ branch, showToast }) => {
               <div className="flex justify-between items-start mb-6">
                 <div>
                   <h3 className="text-lg font-semibold text-gray-800">Полевой выход #{index + 1}</h3>
-                  <p className="text-sm text-gray-500 mt-1">Средняя оценка: {calculateAverage(visit)}/10</p>
+                  <p className="text-sm text-gray-500 mt-1">Средняя оценка: <span className="font-bold text-blue-600">{calculateAverage(visit)}/10</span></p>
                 </div>
                 {visits.length > 1 && <button type="button" onClick={() => removeVisit(index)} className="text-red-600"><Icons.X className="w-5 h-5" /></button>}
               </div>
@@ -891,7 +945,9 @@ const FieldVisitsPage = ({ branch, showToast }) => {
   );
 };
 
-// ==================== FORM 3: ONE-ON-ONE ====================
+// ==================== Продолжение в Part4_v2.jsx ====================
+
+// ==================== FORM 3: ONE-ON-ONE (ОБНОВЛЕНА ИНСТРУКЦИЯ) ====================
 
 const OneOnOnePage = ({ branch, showToast }) => {
   const [view, setView] = useState('form');
@@ -919,11 +975,16 @@ const OneOnOnePage = ({ branch, showToast }) => {
 
   return (
     <div className="space-y-6">
-      <InstructionBanner title="Инструкция по заполнению отчёта «1-ON-1 встречи»">
-        <p>• <strong>Стояла цель</strong> — задача, поставленная на прошлой встрече</p>
-        <p>• <strong>Результаты работы</strong> — достигнута ли цель, что получилось/не удалось</p>
-        <p>• <strong>План развития</strong> — новые задачи до следующей встречи</p>
-        <p>• <strong>Показатель</strong> — главный KPI сотрудника (средний чек, количество записей и т.д.)</p>
+      <InstructionBanner title="Инструкция по заполнению отчёта «1-ON-1 ВСТРЕЧИ»">
+        <p>В каждой строке указывайте данные для одного сотрудника по итогам встречи.</p>
+        <p className="mt-2">• <strong>Дата встречи</strong> — укажите день, когда прошла встреча</p>
+        <p>• <strong>Мастер</strong> — запишите имя сотрудника, с кем проходила встреча</p>
+        <p>• <strong>Стояла цель</strong> — укажите задачу, которую поставили сотруднику на прошлой встрече (например: увеличить количество записей на 5 клиентов, повысить средний чек до 1500₽)</p>
+        <p>• <strong>Результаты работы</strong> — кратко опишите, достигнута ли прошлая цель, что получилось или не удалось выполнить</p>
+        <p>• <strong>План развития до следующей встречи</strong> — запишите новые задачи или шаги для сотрудника до следующей 1-ON-1 (например: освоить новый сервис, привести 3 друга, пройти обучение)</p>
+        <p>• <strong>Показатель</strong> — главный KPI сотрудника (например, средний чек, процент лояльности, количество записей)</p>
+        <p>• <strong>Дата следующей встречи</strong> — запишите дату запланированной встречи</p>
+        <p>• <strong>Статус</strong> — отметьте статус задачи: выполнено / в процессе / не выполнено</p>
       </InstructionBanner>
 
       <div className="flex gap-4 mb-6">
@@ -941,10 +1002,10 @@ const OneOnOnePage = ({ branch, showToast }) => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <FormInput label="Дата встречи" required><input type="date" value={meeting.date} onChange={(e) => updateMeeting(index, 'date', e.target.value)} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
                 <FormInput label="Имя мастера" required><input type="text" value={meeting.master_name} onChange={(e) => updateMeeting(index, 'master_name', e.target.value)} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
-                <FormInput label="Цель встречи" tooltip="Например: повышение среднего чека" required><textarea value={meeting.goal} onChange={(e) => updateMeeting(index, 'goal', e.target.value)} className="w-full px-4 py-3 border rounded-lg" rows={2} required /></FormInput>
-                <FormInput label="Результаты" tooltip="Фактические достижения"><textarea value={meeting.results} onChange={(e) => updateMeeting(index, 'results', e.target.value)} className="w-full px-4 py-3 border rounded-lg" rows={2} required /></FormInput>
-                <FormInput label="План развития" tooltip="Цели до следующей встречи"><textarea value={meeting.development_plan} onChange={(e) => updateMeeting(index, 'development_plan', e.target.value)} className="w-full px-4 py-3 border rounded-lg" rows={2} required /></FormInput>
-                <FormInput label="Показатель"><input type="text" value={meeting.indicator} onChange={(e) => updateMeeting(index, 'indicator', e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="Средний чек — 1200" required /></FormInput>
+                <FormInput label="Стояла цель" required><textarea value={meeting.goal} onChange={(e) => updateMeeting(index, 'goal', e.target.value)} className="w-full px-4 py-3 border rounded-lg" rows={2} placeholder="Например: повысить средний чек до 1500₽" required /></FormInput>
+                <FormInput label="Результаты работы" required><textarea value={meeting.results} onChange={(e) => updateMeeting(index, 'results', e.target.value)} className="w-full px-4 py-3 border rounded-lg" rows={2} required /></FormInput>
+                <FormInput label="План развития до следующей встречи" required><textarea value={meeting.development_plan} onChange={(e) => updateMeeting(index, 'development_plan', e.target.value)} className="w-full px-4 py-3 border rounded-lg" rows={2} placeholder="Например: освоить новый сервис, привести 3 друга" required /></FormInput>
+                <FormInput label="Показатель (KPI)" required><input type="text" value={meeting.indicator} onChange={(e) => updateMeeting(index, 'indicator', e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="Средний чек, количество записей..." required /></FormInput>
                 <FormInput label="Дата следующей встречи"><input type="date" value={meeting.next_meeting_date} onChange={(e) => updateMeeting(index, 'next_meeting_date', e.target.value)} className="w-full px-4 py-3 border rounded-lg" /></FormInput>
               </div>
             </div>
@@ -957,7 +1018,7 @@ const OneOnOnePage = ({ branch, showToast }) => {
       ) : (
         <div className="bg-white rounded-xl shadow-sm overflow-hidden">
           <table className="w-full">
-            <thead className="bg-gray-50"><tr><th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Дата</th><th className="px-6 py-3 text-left">Мастер</th><th className="px-6 py-3 text-left">Цель</th><th className="px-6 py-3 text-left">Показатель</th></tr></thead>
+            <thead className="bg-gray-50"><tr><th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Дата</th><th className="px-6 py-3 text-left">Мастер</th><th className="px-6 py-3 text-left">Стояла цель</th><th className="px-6 py-3 text-left">Показатель</th></tr></thead>
             <tbody className="divide-y">{history.map((item, i) => (<tr key={i} className="hover:bg-gray-50"><td className="px-6 py-4 text-sm">{item['Дата встречи']}</td><td className="px-6 py-4 text-sm">{item['Имя мастера']}</td><td className="px-6 py-4 text-sm">{item['Цель встречи']}</td><td className="px-6 py-4 text-sm">{item['Показатель']}</td></tr>))}</tbody>
           </table>
         </div>
@@ -966,7 +1027,7 @@ const OneOnOnePage = ({ branch, showToast }) => {
   );
 };
 
-// ==================== FORM 4: ЕЖЕНЕДЕЛЬНЫЕ ПОКАЗАТЕЛИ ====================
+// ==================== FORM 4: ЕЖЕНЕДЕЛЬНЫЕ ПОКАЗАТЕЛИ (ОБНОВЛЕНА ИНСТРУКЦИЯ) ====================
 
 const WeeklyMetricsPage = ({ branch, showToast }) => {
   const [metrics, setMetrics] = useState({period: '', average_check_plan: '', average_check_fact: '', cosmetics_plan: '', cosmetics_fact: '', additional_services_plan: '', additional_services_fact: ''});
@@ -992,14 +1053,14 @@ const WeeklyMetricsPage = ({ branch, showToast }) => {
   return (
     <div className="space-y-6">
       <InstructionBanner title="Справка по выставлению планов">
-        <p>• <strong>Средний чек план</strong> = (средняя цена стрижки по всем мастерам) + 25%</p>
-        <p>• <strong>Косметика план</strong> = 10% от оборота (данные из iClient - основные показатели - доход)</p>
-        <p>• <strong>Доп. услуги план</strong> = 50% от количества завершённых записей (iClient - основные показатели - завершенные записи)</p>
+        <p><strong>Средний чек план:</strong> средняя стоимость стрижки по филиалу (цена стрижки у каждого мастера / кол-во мастеров) + 25%</p>
+        <p><strong>Косметика план:</strong> 10% от оборота (iClient → Основные показатели → Доход)</p>
+        <p><strong>Доп. услуги план:</strong> 50% от количества завершённых записей (iClient → Основные показатели → Завершенные записи)</p>
       </InstructionBanner>
 
       <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl shadow-sm">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <FormInput label="Период" tooltip="Например: 1-я неделя января" required><input type="text" value={metrics.period} onChange={(e) => setMetrics({...metrics, period: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
+          <FormInput label="Период" tooltip="Например: 1-я неделя января" required><input type="text" value={metrics.period} onChange={(e) => setMetrics({...metrics, period: e.target.value})} className="w-full px-4 py-3 border rounded-lg" placeholder="1-я неделя января" required /></FormInput>
           <div></div>
           <FormInput label="Средний чек (план)" required><input type="number" step="0.01" value={metrics.average_check_plan} onChange={(e) => setMetrics({...metrics, average_check_plan: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
           <FormInput label="Средний чек (факт)" required><input type="number" step="0.01" value={metrics.average_check_fact} onChange={(e) => setMetrics({...metrics, average_check_fact: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required /></FormInput>
@@ -1031,8 +1092,7 @@ const WeeklyMetricsPage = ({ branch, showToast }) => {
   );
 };
 
-
-// ==================== FORM 5: АДАПТАЦИЯ НОВИЧКОВ ====================
+// ==================== FORM 5: АДАПТАЦИЯ НОВИЧКОВ (ОБНОВЛЕНА ИНСТРУКЦИЯ) ====================
 
 const NewbieAdaptationPage = ({ branch, showToast }) => {
   const [adaptations, setAdaptations] = useState([{start_date: '', name: '', haircut_practice: '', service_standards: '', hygiene_sanitation: '', additional_services: '', cosmetics_sales: '', iclient_basics: '', status: 'В процессе'}]);
@@ -1060,11 +1120,14 @@ const NewbieAdaptationPage = ({ branch, showToast }) => {
   return (
     <div className="space-y-6">
       <InstructionBanner title="Справка по адаптации новичков">
-        <p>• <strong>Основные техники</strong> — базовые профессиональные навыки барбера: техника стрижки, бритья, укладки</p>
-        <p>• <strong>Стандарты сервиса</strong> — умение соблюдать корпоративные правила обслуживания клиентов</p>
-        <p>• <strong>Корпоративная культура</strong> — знание и принятие ценностей и внутренних правил компании</p>
-        <p>• <strong>Обучение доп. услугам</strong> — освоение дополнительных процедур (уход за бородой, камуфляж седины и пр.)</p>
-        <p>• <strong>Знания косметики</strong> — знакомство с ассортиментом и техникой продаж</p>
+        <p><strong>Основные техники</strong> — базовые профессиональные навыки барбера: техника стрижки, бритья, укладки; умение пользоваться инструментом. Критерий считается выполненным, если новичок овладел стандартными техниками, необходимыми для работы в филиале.</p>
+        <p className="mt-2"><strong>Стандарты сервиса</strong> — умение соблюдать корпоративные правила обслуживания клиентов: приветствие, ведение беседы, предложение услуг, завершение работы. Важно поддерживать фирменный стиль общения и делать сервис отличительным для сети.</p>
+        <p className="mt-2"><strong>Корпоративная культура</strong> — знание и принятие ценностей и внутренних правил компании: уважение к команде, аккуратность, пунктуальность, участие в мероприятиях филиала. Критерий показывает, насколько новичок интегрирован в коллектив и придерживается общих принципов.</p>
+        <p className="mt-2"><strong>Обучение доп. услугам</strong> — освоение дополнительных процедур (например, уход за бородой, камуфляж седины, оформление бровей и пр.). Необходимо не только знать технику, но и уметь предлагать эти услуги клиентам.</p>
+        <p className="mt-2"><strong>Знания косметики</strong> — знакомство с ассортиментом продаваемых средств, умение объяснить преимущества косметики клиенту, знание техники продаж. Оценивается как теоретическая подготовка, так и фактические продажи.</p>
+        <p className="mt-2"><strong>Процент завершения</strong> — сколько процентов от адаптации пройдено новичком (рассчитывается по количеству выполненных критериев).</p>
+        <p><strong>Дата завершения</strong> — день, когда новичок полностью завершил программу адаптации.</p>
+        <p><strong>Статус</strong> — текущий этап: "В процессе", "Выполнено" или "Не выполнено".</p>
       </InstructionBanner>
 
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -1103,7 +1166,7 @@ const NewbieAdaptationPage = ({ branch, showToast }) => {
   );
 };
 
-// ==================== FORM 6: ПЛАНЫ МАСТЕРОВ ====================
+// ==================== FORM 6: ПЛАНЫ МАСТЕРОВ (ОБНОВЛЕНА ИНСТРУКЦИЯ) ====================
 
 const MasterPlansPage = ({ branch, showToast }) => {
   const [plans, setPlans] = useState([{month: '', master_name: '', average_check_plan: '', average_check_fact: '', additional_services_plan: '', additional_services_fact: '', sales_plan: '', sales_fact: '', salary_plan: '', salary_fact: ''}]);
@@ -1130,10 +1193,18 @@ const MasterPlansPage = ({ branch, showToast }) => {
 
   return (
     <div className="space-y-6">
-      <InstructionBanner title="Индивидуальные планы мастеров">
-        <p>План формируется партнёром в начале каждого месяца и состоит из 4 показателей:</p>
-        <p>• Средний чек • Зарплата за месяц • Кол-во доп. услуг • Объём продаж (допы + косметика)</p>
-        <p>На 1-on-1 встрече в конце месяца партнёр и мастер анализируют выполнение плана и формируют новые задачи.</p>
+      <InstructionBanner title="Инструкция: Индивидуальные планы мастеров">
+        <p>Индивидуальный план мастера формируется партнёром в начале каждого месяца и состоит из 4 ключевых показателей:</p>
+        <p className="mt-2">• <strong>Средний чек</strong></p>
+        <p>• <strong>Зарплата за месяц</strong></p>
+        <p>• <strong>Кол-во доп. услуг</strong> (и каких именно)</p>
+        <p>• <strong>Объём продаж</strong> (допы + косметика)</p>
+        <p className="mt-2">Управляющий в течение месяца фиксирует факт по каждому показателю.</p>
+        <p className="mt-2">На 1-on-1 встрече в конце месяца партнёр и мастер:</p>
+        <p>• анализируют выполнение плана</p>
+        <p>• обсуждают причины успехов и недочётов</p>
+        <p>• формируют задачи и новый план на следующий месяц</p>
+        <p className="mt-2 font-semibold">Итог: Планы ставятся раз в месяц → факты собираются → на 1-on-1 обсуждаются → корректируются месячные цели</p>
       </InstructionBanner>
 
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -1173,7 +1244,7 @@ const MasterPlansPage = ({ branch, showToast }) => {
   );
 };
 
-// ==================== FORM 7: ОТЗЫВЫ (ОБНОВЛЕНО v3.1.0) ====================
+// ==================== FORM 7: ОТЗЫВЫ ====================
 
 const ReviewsPage = ({ branch, showToast }) => {
   const [review, setReview] = useState({week: '', manager_name: '', plan: 13, fact: '', monthly_target: 52});
@@ -1201,6 +1272,7 @@ const ReviewsPage = ({ branch, showToast }) => {
       <InstructionBanner title="Отзывы">
         <p>Фиксированный план: <strong>13 отзывов в неделю</strong> на филиал.</p>
         <p>Введите факт отзывов за текущую неделю. Процент выполнения рассчитается автоматически.</p>
+        <p className="mt-2">Цель на месяц: <strong>52 отзыва</strong> (4 недели × 13 отзывов)</p>
       </InstructionBanner>
 
       <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl shadow-sm">
@@ -1235,7 +1307,7 @@ const ReviewsPage = ({ branch, showToast }) => {
   );
 };
 
-// ==================== FORM 8: СВОДКА (ОБНОВЛЕНО v3.1.0) ====================
+// ==================== FORM 8: СВОДКА ====================
 
 const BranchSummaryPage = ({ branch, showToast }) => {
   const [summary, setSummary] = useState({manager: branch.manager || '', month: getCurrentMonth()});
@@ -1259,7 +1331,14 @@ const BranchSummaryPage = ({ branch, showToast }) => {
     <div className="space-y-6">
       <InstructionBanner title="Сводка по филиалу">
         <p>Автоматический саммари по всем метрикам с процентами выполнения.</p>
-        <p>Цели фиксированные для всех филиалов: Утренние мероприятия (16), Полевые выходы (4), 1-on-1 (6), Еженедельные отчёты (4), Планы мастеров (10), Отзывы (60), Новые сотрудники (10).</p>
+        <p className="mt-2"><strong>Цели фиксированные для всех филиалов:</strong></p>
+        <p>• Утренние мероприятия: {BRANCH_GOALS.morning_events}</p>
+        <p>• Полевые выходы: {BRANCH_GOALS.field_visits}</p>
+        <p>• 1-on-1: {BRANCH_GOALS.one_on_one}</p>
+        <p>• Еженедельные отчёты: {BRANCH_GOALS.weekly_reports}</p>
+        <p>• Планы мастеров: {BRANCH_GOALS.master_plans}</p>
+        <p>• Отзывы: {BRANCH_GOALS.reviews}</p>
+        <p>• Новые сотрудники: {BRANCH_GOALS.new_employees}</p>
       </InstructionBanner>
 
       <form onSubmit={handleSubmit} className="bg-white p-6 rounded-xl shadow-sm">
