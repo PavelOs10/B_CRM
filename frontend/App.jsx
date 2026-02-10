@@ -4,7 +4,6 @@ const { useState, useEffect, useRef } = React;
 // ==================== CONFIG ====================
 const API_BASE_URL = 'http://166.1.201.124:8000';
 
-// Фиксированные цели для каждого филиала
 const BRANCH_GOALS = {
   morning_events: 16,
   field_visits: 4,
@@ -43,7 +42,6 @@ const api = {
 
 // ==================== UTILS ====================
 
-// Автоматический расчет недели года
 const getWeekNumber = (date) => {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
@@ -53,14 +51,12 @@ const getWeekNumber = (date) => {
   return weekNo;
 };
 
-// Получение текущего месяца
 const getCurrentMonth = () => {
   const months = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
   const now = new Date();
   return `${months[now.getMonth()]} ${now.getFullYear()}`;
 };
 
-// ==================== ICONS (ОБНОВЛЕНО - больше разных иконок) ====================
 const Icons = {
   Plus: ({className}) => (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
@@ -189,7 +185,6 @@ const Toast = ({ message, type = 'success', onClose }) => {
   );
 };
 
-// ОБНОВЛЕНО v3.1.1: Компонент с инструкцией - теперь СВОРАЧИВАЕМЫЙ
 const InstructionBanner = ({ title, children, defaultOpen = false }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   
@@ -292,7 +287,7 @@ const AuthPage = ({ onAuth }) => {
           <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-2">
             BarberCRM
           </h1>
-          <p className="text-gray-600">v3.1.1 FINAL - Исправления</p>
+          <p className="text-gray-600">v3.1.1 @IDDQD11</p>
         </div>
 
         <div className="flex gap-2 mb-6 p-1 bg-gray-100 rounded-lg">
@@ -387,7 +382,6 @@ const BarberCRM = ({ branch, token, onLogout }) => {
     setToast({ message, type });
   };
 
-  // ОБНОВЛЕНО v3.1.1: Разные иконки для каждой вкладки
   const menuItems = [
     { id: 'dashboard', label: 'Дашборд', icon: Icons.Dashboard },
     { id: 'morning-events', label: 'Утренние мероприятия', icon: Icons.Sunrise },
@@ -844,7 +838,6 @@ const FieldVisitsPage = ({ branch, showToast }) => {
   const removeVisit = (index) => { setVisits(visits.filter((_, i) => i !== index)); };
   const updateVisit = (index, field, value) => { const newVisits = [...visits]; newVisits[index][field] = value; setVisits(newVisits); };
   
-  // ИСПРАВЛЕНО v3.1.1: Правильный расчет среднего (делим на 5, а не суммируем)
   const calculateAverage = (visit) => { 
     return ((visit.haircut_quality + visit.service_quality + visit.additional_services_rating + visit.cosmetics_rating + visit.standards_rating) / 5).toFixed(1); 
   };
@@ -944,8 +937,6 @@ const FieldVisitsPage = ({ branch, showToast }) => {
     </div>
   );
 };
-
-// ==================== Продолжение в Part4_v2.jsx ====================
 
 // ==================== FORM 3: ONE-ON-ONE (ОБНОВЛЕНА ИНСТРУКЦИЯ) ====================
 

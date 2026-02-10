@@ -43,14 +43,13 @@ def get_service_account_info():
 SERVICE_ACCOUNT_INFO = get_service_account_info()
 SPREADSHEET_ID = os.getenv('GOOGLE_SHEET_ID', '')
 
-# Фиксированные цели для каждого филиала
 BRANCH_GOALS = {
     "morning_events": 16,
     "field_visits": 4,
     "one_on_one": 6,
     "weekly_reports": 4,
     "master_plans": 10,
-    "reviews": 60,  # 52 по факту (13*4), но целевой 60
+    "reviews": 60,
     "new_employees": 10
 }
 
@@ -149,14 +148,13 @@ class MasterPlan(BaseModel):
 class Reviews(BaseModel):
     week: str
     manager_name: str
-    plan: int = Field(default=13, ge=0)  # Фиксированный план 13 в неделю
+    plan: int = Field(default=13, ge=0)
     fact: int = Field(..., ge=0)
-    monthly_target: int = Field(default=52, ge=0)  # 13 * 4 недели
+    monthly_target: int = Field(default=52, ge=0)
 
 class BranchSummary(BaseModel):
     manager: str
     month: str
-    # Цели берутся из BRANCH_GOALS автоматически
 
 # ============= УТИЛИТЫ =============
 
@@ -216,7 +214,6 @@ def count_records_for_month(client, branch_name: str, sheet_suffix: str, month: 
         worksheet = spreadsheet.worksheet(sheet_name)
         records = worksheet.get_all_records()
         
-        # Подсчитываем записи, где упоминается месяц
         count = 0
         for record in records:
             record_str = str(record).lower()
@@ -261,7 +258,6 @@ def login(request: LoginRequest):
         raise HTTPException(status_code=401, detail="Неверный пароль")
     return {"success": True, "token": branch.get('Токен'), "branch": {"name": branch.get('Название'), "address": branch.get('Адрес'), "manager": branch.get('Управляющий')}}
 
-# Новый эндпоинт для получения списка филиалов
 @app.get("/branches")
 def get_branches():
     """Получить список всех филиалов"""
@@ -285,16 +281,14 @@ def get_branches():
         logger.error(f"Ошибка получения филиалов: {e}")
         return {"success": True, "branches": []}
 
-# Новый эндпоинт для получения сводки по филиалу
 @app.get("/dashboard-summary/{branch_name}")
 def get_dashboard_summary(branch_name: str, month: Optional[str] = None):
     """Получить сводку для дашборда"""
     try:
         client = get_sheets_client()
         
-        # Если месяц не указан, используем текущий
         if not month:
-            month = datetime.now().strftime("%B %Y")  # например "January 2026"
+            month = datetime.now().strftime("%B %Y")
         
         summary = {
             "morning_events": {
@@ -334,7 +328,6 @@ def get_dashboard_summary(branch_name: str, month: Optional[str] = None):
             }
         }
         
-        # Добавляем процент выполнения
         for key in summary:
             goal = summary[key]["goal"]
             current = summary[key]["current"]
@@ -625,7 +618,6 @@ def submit_branch_summary(branch_name: str, summary: BranchSummary):
     worksheet = ensure_sheet_exists(client, SPREADSHEET_ID, sheet_name, headers)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # Подсчитываем текущие значения
     metrics = [
         ("Утренние мероприятия", count_records_for_month(client, branch_name, "Утренние мероприятия", summary.month), BRANCH_GOALS["morning_events"]),
         ("Полевые выходы", count_records_for_month(client, branch_name, "Полевые выходы", summary.month), BRANCH_GOALS["field_visits"]),
