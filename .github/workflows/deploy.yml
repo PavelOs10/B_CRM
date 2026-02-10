@@ -70,6 +70,7 @@ jobs:
             docker network rm barber_network 2>/dev/null || true
             
             sleep 2
+            echo "=== И еще разок)) ==="
             stop_container() {
                 local name=$1
                 echo "Останавливаем: $name"
@@ -105,7 +106,7 @@ jobs:
             docker network rm barber_network 2>/dev/null || true
             
             sleep 2
-                        
+
             # ===================================================================
             # ОБНОВЛЕНИЕ КОДА
             # ===================================================================
