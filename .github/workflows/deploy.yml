@@ -133,6 +133,7 @@ jobs:
             # Создаем .env файл с правильным экранированием
             cat > .env << 'ENVEOF'
             GOOGLE_SHEET_ID=${{ secrets.GOOGLE_SHEET_ID }}
+            GOOGLE_DRIVE_FOLDER_ID=${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
             GOOGLE_SERVICE_ACCOUNT_JSON=${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
             ENVEOF
             
