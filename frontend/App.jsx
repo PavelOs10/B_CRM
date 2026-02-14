@@ -285,7 +285,7 @@ const AuthPage = ({ onAuth }) => {
           <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-2">
             BarberCRM
           </h1>
-          <p className="text-gray-600">v3.1.1 @IDDQD11</p>
+          <p className="text-gray-600">v4.0 @IDDQD11</p>
         </div>
 
         <div className="flex gap-2 mb-6 p-1 bg-gray-100 rounded-lg">

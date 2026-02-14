@@ -159,20 +159,66 @@ class BranchSummary(BaseModel):
 # ============= УТИЛИТЫ =============
 
 def create_branch_spreadsheet(client, branch_name: str) -> str:
-    """Создает новую таблицу для филиала и возвращает её ID"""
+    """Создает новую таблицу для филиала и возвращает её ID
+    
+    ВАЖНО: Таблица создаётся в папке на личном Google Drive владельца,
+    чтобы избежать проблем с квотой сервисного аккаунта (15GB лимит)
+    """
     try:
-        # Создаем новую таблицу
-        spreadsheet = client.create(f"BarberCRM - {branch_name}")
-        spreadsheet_id = spreadsheet.id
+        from googleapiclient.discovery import build
+        from google.oauth2.service_account import Credentials
         
-        # Делаем таблицу доступной для редактирования через сервисный аккаунт
-        spreadsheet.share(SERVICE_ACCOUNT_INFO['client_email'], perm_type='user', role='writer')
+        # Получаем ID папки из переменной окружения (опционально)
+        folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID', None)
+        
+        # Создаем credentials для Drive API
+        creds = Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPES)
+        drive_service = build('drive', 'v3', credentials=creds)
+        
+        # Метаданные для новой таблицы
+        file_metadata = {
+            'name': f"BarberCRM - {branch_name}",
+            'mimeType': 'application/vnd.google-apps.spreadsheet'
+        }
+        
+        # Если указана папка, создаём в ней
+        if folder_id:
+            file_metadata['parents'] = [folder_id]
+        
+        # Создаём таблицу через Drive API
+        file = drive_service.files().create(
+            body=file_metadata,
+            fields='id'
+        ).execute()
+        
+        spreadsheet_id = file.get('id')
+        
+        # Даём права сервисному аккаунту на редактирование
+        permission = {
+            'type': 'user',
+            'role': 'writer',
+            'emailAddress': SERVICE_ACCOUNT_INFO['client_email']
+        }
+        drive_service.permissions().create(
+            fileId=spreadsheet_id,
+            body=permission,
+            fields='id'
+        ).execute()
         
         logger.info(f"Создана таблица для филиала '{branch_name}' с ID: {spreadsheet_id}")
         return spreadsheet_id
+        
     except Exception as e:
         logger.error(f"Ошибка создания таблицы: {e}")
-        raise HTTPException(status_code=500, detail=f"Не удалось создать таблицу: {str(e)}")
+        
+        # Проверяем, не проблема ли с квотой
+        error_str = str(e)
+        if 'storageQuotaExceeded' in error_str or '403' in error_str:
+            raise HTTPException(
+                status_code=507,
+                detail="Превышена квота хранилища. Решение: 1) Укажите GOOGLE_DRIVE_FOLDER_ID в .env (ID папки на вашем личном Google Drive). 2) Дайте доступ сервисному аккаунту к этой папке. 3) Или очистите старые таблицы."
+            )
+        raise HTTPException(status_code=500, detail=f"Не удалось создать таблицу: {error_str}")
 
 def get_branch_spreadsheet_id(client, branch_name: str) -> str:
     """Получает ID таблицы филиала из главной таблицы или создает новую"""
