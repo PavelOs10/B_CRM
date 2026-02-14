@@ -8,6 +8,7 @@ services:
     environment:
       GOOGLE_SERVICE_ACCOUNT_JSON: ${GOOGLE_SERVICE_ACCOUNT_JSON}
       GOOGLE_SHEET_ID: ${GOOGLE_SHEET_ID}
+      GOOGLE_DRIVE_FOLDER_ID: ${GOOGLE_DRIVE_FOLDER_ID}
     ports:
       - "8000:8000"
     healthcheck:

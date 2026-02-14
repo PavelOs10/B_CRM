@@ -161,14 +161,14 @@ class BranchSummary(BaseModel):
 def create_branch_spreadsheet(client, branch_name: str) -> str:
     """Создает новую таблицу для филиала и возвращает её ID
     
-    ВАЖНО: Таблица создаётся в папке на личном Google Drive владельца,
-    чтобы избежать проблем с квотой сервисного аккаунта (15GB лимит)
+    СТРАТЕГИЯ: Создаём файл БЕЗ папки (на диске сервисного аккаунта),
+    затем ПЕРЕМЕЩАЕМ в папку пользователя. Это обходит проблему с квотой.
     """
     try:
         from googleapiclient.discovery import build
         from google.oauth2.service_account import Credentials
         
-        # Получаем ID папки из переменной окружения (опционально)
+        # Получаем ID папки из переменной окружения
         folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID', None)
         
         logger.info(f"🔍 ДИАГНОСТИКА: GOOGLE_DRIVE_FOLDER_ID = '{folder_id}'")
@@ -178,22 +178,15 @@ def create_branch_spreadsheet(client, branch_name: str) -> str:
         creds = Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPES)
         drive_service = build('drive', 'v3', credentials=creds)
         
-        # Метаданные для новой таблицы
+        # ШАГ 1: Создаём таблицу БЕЗ указания папки (на диске сервисного аккаунта)
         file_metadata = {
             'name': f"BarberCRM - {branch_name}",
             'mimeType': 'application/vnd.google-apps.spreadsheet'
         }
         
-        # Если указана папка, создаём в ней
-        if folder_id:
-            file_metadata['parents'] = [folder_id]
-            logger.info(f"✅ Создаём таблицу в папке: {folder_id}")
-        else:
-            logger.warning("⚠️ GOOGLE_DRIVE_FOLDER_ID не указан! Создание на диске сервисного аккаунта!")
+        logger.info(f"📝 Шаг 1: Создаём таблицу БЕЗ папки (на диске сервисного аккаунта)...")
+        logger.info(f"📝 Метаданные: {file_metadata}")
         
-        logger.info(f"📝 Метаданные файла: {file_metadata}")
-        
-        # Создаём таблицу через Drive API
         file = drive_service.files().create(
             body=file_metadata,
             fields='id'
@@ -202,34 +195,73 @@ def create_branch_spreadsheet(client, branch_name: str) -> str:
         spreadsheet_id = file.get('id')
         logger.info(f"✅ Таблица создана! ID: {spreadsheet_id}")
         
-        # Даём права сервисному аккаунту на редактирование
-        permission = {
-            'type': 'user',
-            'role': 'writer',
-            'emailAddress': SERVICE_ACCOUNT_INFO['client_email']
-        }
-        drive_service.permissions().create(
-            fileId=spreadsheet_id,
-            body=permission,
-            fields='id'
-        ).execute()
+        # ШАГ 2: Если указана папка, ПЕРЕМЕЩАЕМ файл в эту папку
+        if folder_id:
+            try:
+                logger.info(f"📁 Шаг 2: Перемещаем файл в папку {folder_id}...")
+                
+                # Получаем текущих родителей файла
+                file_info = drive_service.files().get(
+                    fileId=spreadsheet_id,
+                    fields='parents'
+                ).execute()
+                
+                previous_parents = ",".join(file_info.get('parents', []))
+                logger.info(f"📁 Текущие родители: {previous_parents}")
+                
+                # Перемещаем файл: добавляем новую папку, удаляем старых родителей
+                updated_file = drive_service.files().update(
+                    fileId=spreadsheet_id,
+                    addParents=folder_id,
+                    removeParents=previous_parents,
+                    fields='id, parents'
+                ).execute()
+                
+                logger.info(f"✅ Файл успешно перемещён в папку! Новые родители: {updated_file.get('parents')}")
+                
+            except Exception as move_error:
+                logger.warning(f"⚠️ Не удалось переместить файл в папку: {move_error}")
+                logger.warning(f"⚠️ Файл остался на диске сервисного аккаунта, но это не критично")
+        else:
+            logger.warning("⚠️ GOOGLE_DRIVE_FOLDER_ID не указан! Файл остаётся на диске сервисного аккаунта")
         
-        logger.info(f"✅ Создана таблица для филиала '{branch_name}' с ID: {spreadsheet_id}")
+        # ШАГ 3: Даём права сервисному аккаунту на редактирование (на всякий случай)
+        try:
+            permission = {
+                'type': 'user',
+                'role': 'writer',
+                'emailAddress': SERVICE_ACCOUNT_INFO['client_email']
+            }
+            drive_service.permissions().create(
+                fileId=spreadsheet_id,
+                body=permission,
+                fields='id'
+            ).execute()
+            logger.info(f"✅ Права сервисному аккаунту выданы")
+        except Exception as perm_error:
+            logger.info(f"ℹ️ Права уже есть или не требуются: {perm_error}")
+        
+        logger.info(f"🎉 Создание завершено! Таблица для филиала '{branch_name}' с ID: {spreadsheet_id}")
         return spreadsheet_id
         
     except Exception as e:
         logger.error(f"❌ Ошибка создания таблицы: {e}")
         logger.error(f"❌ Тип ошибки: {type(e)}")
+        logger.error(f"❌ Детали: {str(e)}")
         
         # Проверяем, не проблема ли с квотой
         error_str = str(e)
-        if 'storageQuotaExceeded' in error_str or '403' in error_str:
-            # Добавляем информацию о том, была ли указана папка
-            folder_status = f"GOOGLE_DRIVE_FOLDER_ID = '{folder_id}'" if folder_id else "GOOGLE_DRIVE_FOLDER_ID НЕ УКАЗАН!"
+        if 'storageQuotaExceeded' in error_str:
             raise HTTPException(
                 status_code=507,
-                detail=f"Превышена квота хранилища. {folder_status}. Решения: 1) Проверьте что ID папки правильный: {folder_id}. 2) Убедитесь что сервисный аккаунт ({SERVICE_ACCOUNT_INFO.get('client_email', 'N/A')}) имеет доступ к папке. 3) Проверьте логи выше для деталей."
+                detail=f"Превышена квота хранилища на диске сервисного аккаунта. Это странно, так как файл должен создаваться без папки. Проверьте что на диске сервисного аккаунта есть место (обычно 15 ГБ бесплатно). Ошибка: {error_str}"
             )
+        elif '403' in error_str and 'Forbidden' in error_str:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Доступ запрещён. Возможно проблема с правами Google Drive API. Убедитесь что Drive API включен в Google Cloud Console. Ошибка: {error_str}"
+            )
+        
         raise HTTPException(status_code=500, detail=f"Не удалось создать таблицу: {error_str}")
 
 def get_branch_spreadsheet_id(client, branch_name: str) -> str:
