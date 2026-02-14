@@ -30,26 +30,27 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapi
 
 # ============= КЕШИРОВАНИЕ =============
 
-# Кеш для данных (время жизни: 60 секунд)
+# Кеш для данных (время жизни: 300 секунд = 5 минут)
 cache_store = {}
-CACHE_TTL = 60  # секунд
+CACHE_TTL = 300  # Увеличено с 60 до 300 секунд для снижения нагрузки на API
 
 def get_from_cache(key: str):
     """Получить данные из кеша"""
     if key in cache_store:
         data, timestamp = cache_store[key]
-        if time.time() - timestamp < CACHE_TTL:
-            logger.info(f"📦 Кеш HIT: {key}")
+        age = time.time() - timestamp
+        if age < CACHE_TTL:
+            logger.debug(f"📦 Кеш HIT: {key} (возраст: {int(age)}s)")
             return data
         else:
-            logger.info(f"⏰ Кеш EXPIRED: {key}")
+            logger.debug(f"⏰ Кеш EXPIRED: {key}")
             del cache_store[key]
     return None
 
 def set_cache(key: str, value: Any):
     """Сохранить данные в кеш"""
     cache_store[key] = (value, time.time())
-    logger.info(f"💾 Кеш SAVED: {key}")
+    logger.debug(f"💾 Кеш SAVED: {key}")
 
 def clear_cache_for_branch(branch_name: str):
     """Очистить кеш для конкретного филиала"""
@@ -301,15 +302,9 @@ def get_branch_spreadsheet_id(client, branch_name: str) -> str:
     cache_key = f"spreadsheet_id_{branch_name}"
     cached = get_from_cache(cache_key)
     if cached:
-        # Проверяем что таблица существует
-        try:
-            client.open_by_key(cached)
-            return cached
-        except gspread.exceptions.SpreadsheetNotFound:
-            logger.warning(f"⚠️ Таблица {cached} не найдена, очищаем кеш")
-            del cache_store[cache_key]
-        except Exception as e:
-            logger.warning(f"⚠️ Ошибка проверки таблицы: {e}")
+        # ВАЖНО: НЕ проверяем таблицу здесь - это лишний API запрос!
+        # Проверка будет при первом использовании
+        return cached
     
     try:
         spreadsheet = client.open_by_key(MASTER_SPREADSHEET_ID)
@@ -498,7 +493,42 @@ def count_records_for_month_from_data(records: List[Dict], month: str) -> int:
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy", "version": "4.1.0", "cache_enabled": True}
+    return {"status": "healthy", "version": "4.1.1", "cache_enabled": True, "cache_ttl": CACHE_TTL}
+
+@app.get("/api/cache-stats")
+def get_cache_stats():
+    """Статистика кеша"""
+    current_time = time.time()
+    items = []
+    
+    for key, (value, timestamp) in cache_store.items():
+        age = int(current_time - timestamp)
+        remaining = int(CACHE_TTL - age)
+        items.append({
+            "key": key,
+            "age_seconds": age,
+            "remaining_seconds": max(0, remaining),
+            "expired": age >= CACHE_TTL
+        })
+    
+    return {
+        "cache_size": len(cache_store),
+        "ttl_seconds": CACHE_TTL,
+        "items": items
+    }
+
+@app.post("/api/cache-clear")
+def clear_cache():
+    """Очистка всего кеша"""
+    cache_store.clear()
+    logger.info("🗑️ Весь кеш очищен вручную")
+    return {"success": True, "message": "Кеш очищен"}
+
+@app.post("/api/cache-clear/{branch_name}")
+def clear_branch_cache(branch_name: str):
+    """Очистка кеша конкретного филиала"""
+    clear_cache_for_branch(branch_name)
+    return {"success": True, "message": f"Кеш для '{branch_name}' очищен"}
 
 @app.post("/register")
 def register_branch(branch: BranchRegister):
