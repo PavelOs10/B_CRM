@@ -915,6 +915,9 @@ const FieldVisitsPage = ({ branch, showToast }) => {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Мастер</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Стрижки</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Сервис</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Доп услуги</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Косметика</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Стандарты</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Общая оценка</th>
               </tr>
             </thead>
@@ -923,9 +926,12 @@ const FieldVisitsPage = ({ branch, showToast }) => {
                 <tr key={i} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Дата']}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{item['Имя мастера']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Качество стрижек']}/10</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Качество сервиса']}/10</td>
-                  <td className="px-6 py-4 whitespace-nowrap"><span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${item['Общая оценка'] >= 8 ? 'bg-green-100 text-green-800' : item['Общая оценка'] >= 6 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>{item['Общая оценка']}/10</span></td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Качество стрижки']}/10</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Качество обслуживания']}/10</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Доп. услуги (оценка)']}/10</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Косметика (оценка)']}/10</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Стандарты (оценка)']}/10</td>
+                  <td className="px-6 py-4 whitespace-nowrap"><span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${(item['Общая оценка'] || 0) >= 8 ? 'bg-green-100 text-green-800' : (item['Общая оценка'] || 0) >= 6 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>{item['Общая оценка'] || 'N/A'}/10</span></td>
                 </tr>
               ))}
             </tbody>
@@ -1007,8 +1013,30 @@ const OneOnOnePage = ({ branch, showToast }) => {
       ) : (
         <div className="bg-white rounded-xl shadow-sm overflow-hidden">
           <table className="w-full">
-            <thead className="bg-gray-50"><tr><th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Дата</th><th className="px-6 py-3 text-left">Мастер</th><th className="px-6 py-3 text-left">Стояла цель</th><th className="px-6 py-3 text-left">Показатель</th></tr></thead>
-            <tbody className="divide-y">{history.map((item, i) => (<tr key={i} className="hover:bg-gray-50"><td className="px-6 py-4 text-sm">{item['Дата встречи']}</td><td className="px-6 py-4 text-sm">{item['Имя мастера']}</td><td className="px-6 py-4 text-sm">{item['Цель встречи']}</td><td className="px-6 py-4 text-sm">{item['Показатель']}</td></tr>))}</tbody>
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Дата</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Мастер</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Цель</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Результаты</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">План развития</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Показатель</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">След. встреча</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {history.map((item, i) => (
+                <tr key={i} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Дата']}</td>
+                  <td className="px-6 py-4 text-sm font-medium">{item['Имя мастера']}</td>
+                  <td className="px-6 py-4 text-sm">{item['Цель']}</td>
+                  <td className="px-6 py-4 text-sm">{item['Результаты']}</td>
+                  <td className="px-6 py-4 text-sm">{item['План развития']}</td>
+                  <td className="px-6 py-4 text-sm">{item['Показатель']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Дата след. встречи'] || '-'}</td>
+                </tr>
+              ))}
+            </tbody>
           </table>
         </div>
       )}
@@ -1027,7 +1055,7 @@ const WeeklyMetricsPage = ({ branch, showToast }) => {
     e.preventDefault();
     setLoading(true);
     try {
-      await api.request(`/weekly-metrics/${branch.name}`, { method: 'POST', body: JSON.stringify({...metrics, average_check_plan: parseFloat(metrics.average_check_plan), average_check_fact: parseFloat(metrics.average_check_fact), cosmetics_plan: parseFloat(metrics.cosmetics_plan), cosmetics_fact: parseFloat(metrics.cosmetics_fact), additional_services_plan: parseFloat(metrics.additional_services_plan), additional_services_fact: parseFloat(metrics.additional_services_fact)}) });
+      await api.request(`/weekly-metrics/${branch.name}`, { method: 'POST', body: JSON.stringify([{period: metrics.period, average_check_plan: parseFloat(metrics.average_check_plan), average_check_fact: parseFloat(metrics.average_check_fact), cosmetics_plan: parseFloat(metrics.cosmetics_plan), cosmetics_fact: parseFloat(metrics.cosmetics_fact), additional_services_plan: parseFloat(metrics.additional_services_plan), additional_services_fact: parseFloat(metrics.additional_services_fact)}]) });
       showToast('Показатели успешно добавлены!');
       setMetrics({period: '', average_check_plan: '', average_check_fact: '', cosmetics_plan: '', cosmetics_fact: '', additional_services_plan: '', additional_services_fact: ''});
       loadHistory();
@@ -1084,6 +1112,7 @@ const WeeklyMetricsPage = ({ branch, showToast }) => {
 // ==================== FORM 5: АДАПТАЦИЯ НОВИЧКОВ (ОБНОВЛЕНА ИНСТРУКЦИЯ) ====================
 
 const NewbieAdaptationPage = ({ branch, showToast }) => {
+  const [view, setView] = useState('form');
   const [adaptations, setAdaptations] = useState([{start_date: '', name: '', haircut_practice: '', service_standards: '', hygiene_sanitation: '', additional_services: '', cosmetics_sales: '', iclient_basics: '', status: 'В процессе'}]);
   const [loading, setLoading] = useState(false);
   const [history, setHistory] = useState([]);
@@ -1119,7 +1148,17 @@ const NewbieAdaptationPage = ({ branch, showToast }) => {
         <p><strong>Статус</strong> — текущий этап: "В процессе", "Выполнено" или "Не выполнено".</p>
       </InstructionBanner>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <div className="flex gap-4 mb-6">
+        <button onClick={() => setView('form')} className={`px-6 py-3 rounded-lg font-medium transition-all ${view === 'form' ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-gray-700'}`}>
+          Добавить сотрудников
+        </button>
+        <button onClick={() => setView('history')} className={`px-6 py-3 rounded-lg font-medium transition-all ${view === 'history' ? 'bg-blue-600 text-white shadow-lg' : 'bg-white text-gray-700'}`}>
+          История ({history.length})
+        </button>
+      </div>
+
+      {view === 'form' ? (
+        <form onSubmit={handleSubmit} className="space-y-6">
         {adaptations.map((adapt, index) => (
           <div key={index} className="bg-white p-6 rounded-xl shadow-sm">
             <div className="flex justify-between mb-4">
@@ -1144,13 +1183,40 @@ const NewbieAdaptationPage = ({ branch, showToast }) => {
           <button type="submit" disabled={loading} className="px-8 py-3 bg-blue-600 text-white rounded-lg">{loading ? 'Сохранение...' : 'Сохранить'}</button>
         </div>
       </form>
-
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-50"><tr><th className="px-6 py-3 text-left">Дата начала</th><th className="px-6 py-3 text-left">Имя</th><th className="px-6 py-3 text-left">Статус</th></tr></thead>
-          <tbody className="divide-y">{history.map((item, i) => (<tr key={i}><td className="px-6 py-4">{item['Дата начала']}</td><td className="px-6 py-4">{item['Имя новичка']}</td><td className="px-6 py-4"><span className={`px-2 py-1 rounded text-xs ${item['Статус адаптации'] === 'Завершена' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>{item['Статус адаптации']}</span></td></tr>))}</tbody>
-        </table>
-      </div>
+      ) : (
+        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+          <table className="w-full">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Дата начала</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Имя</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Статус</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Практика стрижки</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Основы iClient</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {history.map((item, i) => (
+                <tr key={i} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Дата начала']}</td>
+                  <td className="px-6 py-4 text-sm font-medium">{item['Имя']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                      item['Статус'] === 'Завершена' ? 'bg-green-100 text-green-800' : 
+                      item['Статус'] === 'В процессе' ? 'bg-blue-100 text-blue-800' : 
+                      'bg-yellow-100 text-yellow-800'
+                    }`}>
+                      {item['Статус']}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-sm">{item['Практика стрижки']}</td>
+                  <td className="px-6 py-4 text-sm">{item['Основы iClient']}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 };
@@ -1244,7 +1310,7 @@ const ReviewsPage = ({ branch, showToast }) => {
     e.preventDefault();
     setLoading(true);
     try {
-      await api.request(`/reviews/${branch.name}`, { method: 'POST', body: JSON.stringify({...review, plan: 13, fact: parseInt(review.fact), monthly_target: 52}) });
+      await api.request(`/reviews/${branch.name}`, { method: 'POST', body: JSON.stringify([{week: review.week, manager_name: review.manager_name, plan: 13, fact: parseInt(review.fact), monthly_target: 52}]) });
       showToast('Отзывы успешно добавлены!');
       setReview({week: '', manager_name: '', plan: 13, fact: '', monthly_target: 52});
       loadHistory();

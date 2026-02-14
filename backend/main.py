@@ -16,7 +16,7 @@ import time
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="BarberCRM API", version="4.1.0")
+app = FastAPI(title="BarberCRM API", version="4.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -493,7 +493,7 @@ def count_records_for_month_from_data(records: List[Dict], month: str) -> int:
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy", "version": "4.1.1", "cache_enabled": True, "cache_ttl": CACHE_TTL}
+    return {"status": "healthy", "version": "4.2.0", "cache_enabled": True, "cache_ttl": CACHE_TTL}
 
 @app.get("/api/cache-stats")
 def get_cache_stats():
@@ -771,12 +771,21 @@ def submit_field_visits(branch_name: str, visits: List[FieldVisit]):
             "Дата отправки", "Дата", "Имя мастера", "Качество стрижки", "Качество обслуживания",
             "Доп. услуги (комм.)", "Доп. услуги (оценка)", "Косметика (комм.)", 
             "Косметика (оценка)", "Стандарты (комм.)", "Стандарты (оценка)", 
-            "Ошибки", "Дата след. проверки"
+            "Ошибки", "Дата след. проверки", "Общая оценка"
         ]
         worksheet = ensure_sheet_exists(client, spreadsheet_id, sheet_name, headers)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         for visit in visits:
+            # Вычисляем среднюю оценку из 5 критериев
+            avg_rating = round((
+                visit.haircut_quality + 
+                visit.service_quality + 
+                visit.additional_services_rating + 
+                visit.cosmetics_rating + 
+                visit.standards_rating
+            ) / 5, 1)
+            
             row = [
                 timestamp,
                 str(visit.date),
@@ -790,7 +799,8 @@ def submit_field_visits(branch_name: str, visits: List[FieldVisit]):
                 str(visit.standards_comment),
                 int(visit.standards_rating),
                 str(visit.errors_comment),
-                str(visit.next_check_date) if visit.next_check_date else ""
+                str(visit.next_check_date) if visit.next_check_date else "",
+                avg_rating  # Общая оценка
             ]
             insert_row_at_top(worksheet, row)
         
