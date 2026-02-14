@@ -1133,6 +1133,7 @@ def get_reviews(branch_name: str):
 def generate_branch_summary(branch_name: str, summary: BranchSummary):
     """Генерация итогового отчета филиала с расчетом всех метрик"""
     try:
+        logger.info(f"🔍 Формирование сводки для '{branch_name}', месяц: '{summary.month}'")
         client = get_sheets_client()
         spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
         
@@ -1147,6 +1148,7 @@ def generate_branch_summary(branch_name: str, summary: BranchSummary):
             "Адаптация новичков"
         ]
         
+        logger.info(f"📊 Загрузка данных из {len(sheet_names)} листов...")
         all_data = get_all_sheet_data_batch(client, spreadsheet_id, sheet_names)
         
         # Подсчитываем метрики для указанного месяца
@@ -1181,6 +1183,10 @@ def generate_branch_summary(branch_name: str, summary: BranchSummary):
             }
         }
         
+        logger.info(f"📈 Рассчитано метрик: {len(metrics)}")
+        for name, data in metrics.items():
+            logger.info(f"   • {name}: {data['current']}/{data['goal']}")
+        
         # Создаем/получаем лист для сводок
         sheet_name = "Итоговые отчеты"
         headers = ["Дата отправки", "Руководитель", "Месяц", "Метрика", "Текущее количество", "Цель на месяц", "Выполнение %"]
@@ -1200,12 +1206,16 @@ def generate_branch_summary(branch_name: str, summary: BranchSummary):
                 float(percentage)
             ]
             insert_row_at_top(worksheet, row)
+            logger.info(f"✅ Добавлена строка: {metric_name}")
         
         clear_cache_for_branch(branch_name)
+        logger.info(f"✅ Сводка успешно сформирована!")
         
         return {"success": True, "message": "Отчет успешно создан"}
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        logger.error(f"❌ Ошибка формирования сводки: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/branch-summary/{branch_name}")

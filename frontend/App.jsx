@@ -1123,10 +1123,70 @@ const WeeklyMetricsPage = ({ branch, showToast }) => {
         <button type="submit" disabled={loading} className="mt-4 px-8 py-3 bg-blue-600 text-white rounded-lg">{loading ? 'Сохранение...' : 'Сохранить'}</button>
       </form>
 
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+      <div className="bg-white rounded-xl shadow-sm overflow-x-auto">
         <table className="w-full">
-          <thead className="bg-gray-50"><tr><th className="px-6 py-3 text-left">Период</th><th className="px-6 py-3 text-left">Средний чек %</th><th className="px-6 py-3 text-left">Косметика %</th><th className="px-6 py-3 text-left">Доп. услуги %</th></tr></thead>
-          <tbody className="divide-y">{history.map((item, i) => (<tr key={i}><td className="px-6 py-4">{item['Период']}</td><td className="px-6 py-4">{item['Выполнение среднего чека %']}%</td><td className="px-6 py-4">{item['Выполнение косметики %']}%</td><td className="px-6 py-4">{item['Выполнение доп. услуг %']}%</td></tr>))}</tbody>
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Дата отправки</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Период</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Ср. чек (план)</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Ср. чек (факт)</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Ср. чек %</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Косметика (план)</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Косметика (факт)</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Косметика %</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Доп. услуги (план)</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Доп. услуги (факт)</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Доп. услуги %</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {history.map((item, i) => {
+              const avgCheckPercent = calcPerformance(item['Средний чек (факт)'], item['Средний чек (план)']);
+              const cosmeticsPercent = calcPerformance(item['Косметика (факт)'], item['Косметика (план)']);
+              const servicesPercent = calcPerformance(item['Доп. услуги (факт)'], item['Доп. услуги (план)']);
+              
+              return (
+                <tr key={i} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item['Дата отправки']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{item['Период']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Средний чек (план)']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Средний чек (факт)']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                      parseFloat(avgCheckPercent) >= 100 ? 'bg-green-100 text-green-800' : 
+                      parseFloat(avgCheckPercent) >= 75 ? 'bg-yellow-100 text-yellow-800' : 
+                      'bg-red-100 text-red-800'
+                    }`}>
+                      {avgCheckPercent}%
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Косметика (план)']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Косметика (факт)']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                      parseFloat(cosmeticsPercent) >= 100 ? 'bg-green-100 text-green-800' : 
+                      parseFloat(cosmeticsPercent) >= 75 ? 'bg-yellow-100 text-yellow-800' : 
+                      'bg-red-100 text-red-800'
+                    }`}>
+                      {cosmeticsPercent}%
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Доп. услуги (план)']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Доп. услуги (факт)']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                      parseFloat(servicesPercent) >= 100 ? 'bg-green-100 text-green-800' : 
+                      parseFloat(servicesPercent) >= 75 ? 'bg-yellow-100 text-yellow-800' : 
+                      'bg-red-100 text-red-800'
+                    }`}>
+                      {servicesPercent}%
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
         </table>
       </div>
     </div>
