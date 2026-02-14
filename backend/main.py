@@ -359,14 +359,21 @@ def ensure_sheet_exists(client, spreadsheet_id: str, sheet_name: str, headers: L
         
         try:
             worksheet = spreadsheet.worksheet(sheet_name)
+            # ИСПРАВЛЕНИЕ: Проверяем и исправляем заголовки
+            existing_headers = worksheet.row_values(1)
+            if not existing_headers or existing_headers != headers:
+                logger.warning(f"⚠️ Исправляем заголовки листа '{sheet_name}'")
+                # Удаляем все строки и создаем правильные заголовки
+                worksheet.clear()
+                worksheet.append_row(headers)
+                logger.info(f"✅ Заголовки обновлены: {headers}")
         except gspread.exceptions.WorksheetNotFound:
             logger.info(f"📝 Создание листа: {sheet_name}")
-            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
+            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=len(headers))
             worksheet.append_row(headers)
+            logger.info(f"✅ Создан лист с заголовками: {headers}")
             return worksheet
         
-        if not worksheet.row_values(1):
-            worksheet.append_row(headers)
         return worksheet
     except HTTPException:
         raise
@@ -1240,9 +1247,36 @@ def get_branch_summary(branch_name: str):
         spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
         spreadsheet = client.open_by_key(spreadsheet_id)
         worksheet = spreadsheet.worksheet("Итоговые отчеты")
-        data = worksheet.get_all_records()
         
-        logger.info(f"✅ Загружено {len(data)} записей сводки")
+        # ИСПРАВЛЕНИЕ: Сначала пытаемся get_all_records, если не работает - используем get_all_values
+        try:
+            data = worksheet.get_all_records()
+            logger.info(f"✅ Загружено {len(data)} записей сводки через get_all_records()")
+        except Exception as e:
+            logger.warning(f"⚠️ get_all_records() не сработал: {e}")
+            logger.info(f"🔄 Пробуем альтернативный метод get_all_values()...")
+            
+            # Получаем все значения как список списков
+            all_values = worksheet.get_all_values()
+            if not all_values or len(all_values) < 2:
+                logger.info(f"ℹ️ Лист пустой или только заголовки")
+                return {"success": True, "data": []}
+            
+            # Первая строка - заголовки
+            headers = all_values[0]
+            # Остальные строки - данные
+            data = []
+            for row in all_values[1:]:
+                # Создаем словарь из заголовков и значений
+                row_dict = {}
+                for i, header in enumerate(headers):
+                    if i < len(row):
+                        row_dict[header] = row[i]
+                    else:
+                        row_dict[header] = ""
+                data.append(row_dict)
+            
+            logger.info(f"✅ Загружено {len(data)} записей сводки через get_all_values()")
         
         result = {"success": True, "data": data}
         set_cache(cache_key, result)
