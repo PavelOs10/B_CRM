@@ -60,14 +60,68 @@ def generate_token() -> str:
     return secrets.token_urlsafe(32)
 
 def get_sheets_client():
+    """
+    Получить клиент для работы с Google Sheets
+    Поддерживает два метода авторизации:
+    1. OAuth (GOOGLE_OAUTH_TOKEN) - для личного Google Drive, не требует биллинга
+    2. Service Account (GOOGLE_SERVICE_ACCOUNT_JSON) - для корпоративного использования
+    """
     try:
-        if not SERVICE_ACCOUNT_INFO:
-            raise HTTPException(status_code=500, detail="Google Sheets не настроен")
-        creds = Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPES)
-        return gspread.authorize(creds)
+        # Проверяем наличие OAuth токена
+        oauth_token_str = os.getenv('GOOGLE_OAUTH_TOKEN', None)
+        
+        if oauth_token_str:
+            # МЕТОД 1: OAuth авторизация (рекомендуется для РФ)
+            logger.info("🔐 Используем OAuth авторизацию (личный Google Drive)")
+            
+            from google.oauth2.credentials import Credentials as OAuthCredentials
+            
+            try:
+                token_data = json.loads(oauth_token_str)
+                
+                creds = OAuthCredentials(
+                    token=token_data.get('token'),
+                    refresh_token=token_data.get('refresh_token'),
+                    token_uri=token_data.get('token_uri', 'https://oauth2.googleapis.com/token'),
+                    client_id=token_data.get('client_id'),
+                    client_secret=token_data.get('client_secret'),
+                    scopes=SCOPES
+                )
+                
+                # Проверяем и обновляем токен если истёк
+                if creds.expired and creds.refresh_token:
+                    from google.auth.transport.requests import Request
+                    logger.info("🔄 Обновляем истёкший OAuth токен...")
+                    creds.refresh(Request())
+                    logger.info("✅ Токен обновлён")
+                
+                return gspread.authorize(creds)
+                
+            except Exception as oauth_error:
+                logger.error(f"❌ Ошибка OAuth авторизации: {oauth_error}")
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Ошибка OAuth авторизации. Возможно токен истёк. Запустите get_oauth_token.py для получения нового токена. Ошибка: {str(oauth_error)}"
+                )
+        
+        else:
+            # МЕТОД 2: Service Account авторизация (требует биллинга)
+            logger.info("🔐 Используем Service Account авторизацию")
+            
+            if not SERVICE_ACCOUNT_INFO:
+                raise HTTPException(
+                    status_code=500, 
+                    detail="Google Sheets не настроен. Укажите GOOGLE_OAUTH_TOKEN или GOOGLE_SERVICE_ACCOUNT_JSON в .env"
+                )
+            
+            creds = Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPES)
+            return gspread.authorize(creds)
+            
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Ошибка авторизации: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Ошибка авторизации: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка авторизации Google: {str(e)}")
 
 # ============= МОДЕЛИ =============
 
@@ -161,108 +215,99 @@ class BranchSummary(BaseModel):
 def create_branch_spreadsheet(client, branch_name: str) -> str:
     """Создает новую таблицу для филиала и возвращает её ID
     
-    СТРАТЕГИЯ: Создаём файл БЕЗ папки (на диске сервисного аккаунта),
-    затем ПЕРЕМЕЩАЕМ в папку пользователя. Это обходит проблему с квотой.
+    При использовании OAuth файлы создаются на личном Google Drive пользователя
+    При использовании Service Account - на диске сервисного аккаунта
     """
     try:
-        from googleapiclient.discovery import build
-        from google.oauth2.service_account import Credentials
-        
-        # Получаем ID папки из переменной окружения
         folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID', None)
+        oauth_token_str = os.getenv('GOOGLE_OAUTH_TOKEN', None)
         
-        logger.info(f"🔍 ДИАГНОСТИКА: GOOGLE_DRIVE_FOLDER_ID = '{folder_id}'")
-        logger.info(f"🔍 ДИАГНОСТИКА: Все env переменные с GOOGLE: {[k for k in os.environ.keys() if 'GOOGLE' in k]}")
+        logger.info(f"🔍 GOOGLE_DRIVE_FOLDER_ID = '{folder_id}'")
+        logger.info(f"🔍 Метод авторизации: {'OAuth' if oauth_token_str else 'Service Account'}")
         
-        # Создаем credentials для Drive API
-        creds = Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPES)
-        drive_service = build('drive', 'v3', credentials=creds)
-        
-        # ШАГ 1: Создаём таблицу БЕЗ указания папки (на диске сервисного аккаунта)
-        file_metadata = {
-            'name': f"BarberCRM - {branch_name}",
-            'mimeType': 'application/vnd.google-apps.spreadsheet'
-        }
-        
-        logger.info(f"📝 Шаг 1: Создаём таблицу БЕЗ папки (на диске сервисного аккаунта)...")
-        logger.info(f"📝 Метаданные: {file_metadata}")
-        
-        file = drive_service.files().create(
-            body=file_metadata,
-            fields='id'
-        ).execute()
-        
-        spreadsheet_id = file.get('id')
-        logger.info(f"✅ Таблица создана! ID: {spreadsheet_id}")
-        
-        # ШАГ 2: Если указана папка, ПЕРЕМЕЩАЕМ файл в эту папку
-        if folder_id:
-            try:
-                logger.info(f"📁 Шаг 2: Перемещаем файл в папку {folder_id}...")
-                
-                # Получаем текущих родителей файла
-                file_info = drive_service.files().get(
-                    fileId=spreadsheet_id,
-                    fields='parents'
-                ).execute()
-                
-                previous_parents = ",".join(file_info.get('parents', []))
-                logger.info(f"📁 Текущие родители: {previous_parents}")
-                
-                # Перемещаем файл: добавляем новую папку, удаляем старых родителей
-                updated_file = drive_service.files().update(
-                    fileId=spreadsheet_id,
-                    addParents=folder_id,
-                    removeParents=previous_parents,
-                    fields='id, parents'
-                ).execute()
-                
-                logger.info(f"✅ Файл успешно перемещён в папку! Новые родители: {updated_file.get('parents')}")
-                
-            except Exception as move_error:
-                logger.warning(f"⚠️ Не удалось переместить файл в папку: {move_error}")
-                logger.warning(f"⚠️ Файл остался на диске сервисного аккаунта, но это не критично")
-        else:
-            logger.warning("⚠️ GOOGLE_DRIVE_FOLDER_ID не указан! Файл остаётся на диске сервисного аккаунта")
-        
-        # ШАГ 3: Даём права сервисному аккаунту на редактирование (на всякий случай)
+        # МЕТОД 1: Создание через gspread (работает для обоих типов авторизации)
         try:
-            permission = {
-                'type': 'user',
-                'role': 'writer',
-                'emailAddress': SERVICE_ACCOUNT_INFO['client_email']
-            }
-            drive_service.permissions().create(
-                fileId=spreadsheet_id,
-                body=permission,
-                fields='id'
-            ).execute()
-            logger.info(f"✅ Права сервисному аккаунту выданы")
-        except Exception as perm_error:
-            logger.info(f"ℹ️ Права уже есть или не требуются: {perm_error}")
+            logger.info(f"📝 Создаём таблицу через gspread.create()...")
+            spreadsheet = client.create(f"BarberCRM - {branch_name}")
+            spreadsheet_id = spreadsheet.id
+            logger.info(f"✅ Таблица создана! ID: {spreadsheet_id}")
+            
+            # Если указана папка - перемещаем туда
+            if folder_id:
+                try:
+                    from googleapiclient.discovery import build
+                    
+                    # Получаем credentials из текущей сессии gspread
+                    auth = client.auth
+                    
+                    logger.info(f"📁 Перемещаем файл в папку: {folder_id}")
+                    drive_service = build('drive', 'v3', credentials=auth)
+                    
+                    # Получаем текущих родителей
+                    file_obj = drive_service.files().get(
+                        fileId=spreadsheet_id,
+                        fields='parents'
+                    ).execute()
+                    
+                    previous_parents = ",".join(file_obj.get('parents', []))
+                    
+                    # Перемещаем
+                    drive_service.files().update(
+                        fileId=spreadsheet_id,
+                        addParents=folder_id,
+                        removeParents=previous_parents,
+                        fields='id, parents'
+                    ).execute()
+                    
+                    logger.info(f"✅ Файл перемещён в папку!")
+                    
+                except Exception as move_error:
+                    logger.warning(f"⚠️ Не удалось переместить в папку: {move_error}")
+                    logger.warning(f"⚠️ Файл останется в корне Drive")
+            
+            logger.info(f"✅ Таблица для филиала '{branch_name}' создана успешно!")
+            return spreadsheet_id
+            
+        except Exception as create_error:
+            logger.error(f"❌ Ошибка создания через gspread: {create_error}")
+            
+            error_str = str(create_error)
+            
+            # Детальная диагностика
+            if 'storageQuotaExceeded' in error_str:
+                if oauth_token_str:
+                    raise HTTPException(
+                        status_code=507,
+                        detail="Превышена квота хранилища на вашем Google Drive. Освободите место в Google Drive и попробуйте снова."
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=507,
+                        detail="Превышена квота хранилища сервисного аккаунта. Решение: используйте OAuth авторизацию (GOOGLE_OAUTH_TOKEN) вместо Service Account. Запустите get_oauth_token.py для настройки."
+                    )
+            
+            elif '403' in error_str:
+                if oauth_token_str:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"Ошибка доступа. Проверьте что токен OAuth актуальный. Возможно нужно получить новый токен через get_oauth_token.py. Ошибка: {error_str}"
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"Ошибка доступа к Google Drive API. Для Service Account требуется настроенный биллинг в Google Cloud Console. Рекомендуется использовать OAuth (GOOGLE_OAUTH_TOKEN). Ошибка: {error_str}"
+                    )
+            
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Не удалось создать таблицу: {error_str}"
+            )
         
-        logger.info(f"🎉 Создание завершено! Таблица для филиала '{branch_name}' с ID: {spreadsheet_id}")
-        return spreadsheet_id
-        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"❌ Ошибка создания таблицы: {e}")
-        logger.error(f"❌ Тип ошибки: {type(e)}")
-        logger.error(f"❌ Детали: {str(e)}")
-        
-        # Проверяем, не проблема ли с квотой
-        error_str = str(e)
-        if 'storageQuotaExceeded' in error_str:
-            raise HTTPException(
-                status_code=507,
-                detail=f"Превышена квота хранилища на диске сервисного аккаунта. Это странно, так как файл должен создаваться без папки. Проверьте что на диске сервисного аккаунта есть место (обычно 15 ГБ бесплатно). Ошибка: {error_str}"
-            )
-        elif '403' in error_str and 'Forbidden' in error_str:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Доступ запрещён. Возможно проблема с правами Google Drive API. Убедитесь что Drive API включен в Google Cloud Console. Ошибка: {error_str}"
-            )
-        
-        raise HTTPException(status_code=500, detail=f"Не удалось создать таблицу: {error_str}")
+        logger.error(f"❌ Неожиданная ошибка: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка создания таблицы: {str(e)}")
 
 def get_branch_spreadsheet_id(client, branch_name: str) -> str:
     """Получает ID таблицы филиала из главной таблицы или создает новую"""

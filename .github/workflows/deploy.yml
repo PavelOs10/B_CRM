@@ -24,7 +24,7 @@ jobs:
             set +e
             
             echo "=========================================="
-            echo "BarberCRM Deployment v3.2"
+            echo "BarberCRM Deployment v3.3 (OAuth support)"
             echo "=========================================="
             
             cd /opt/barber-crm-app || mkdir -p /opt/barber-crm-app && cd /opt/barber-crm-app
@@ -71,32 +71,6 @@ jobs:
             
             sleep 2
             echo "=== И еще разок)) ==="
-            stop_container() {
-                local name=$1
-                echo "Останавливаем: $name"
-                
-                if ! docker ps -a --format '{{.Names}}' | grep -q "^${name}$" 2>/dev/null; then
-                    echo "  → Не найден"
-                    return 0
-                fi
-                
-                local pid=$(docker inspect $name --format '{{.State.Pid}}' 2>/dev/null || echo "0")
-                
-                if [ "$pid" != "0" ] && [ ! -z "$pid" ]; then
-                    echo "  → PID: $pid, убиваем"
-                    kill -9 $pid 2>/dev/null || true
-                    sleep 1
-                    
-                    if ps -p $pid > /dev/null 2>&1; then
-                        kill -9 $pid 2>/dev/null || true
-                        sleep 1
-                    fi
-                fi
-                
-                docker rm -f $name 2>/dev/null || true
-                echo "  ✓ Удален"
-            }
-            
             stop_container "barber_backend"
             stop_container "barber_frontend"
             
@@ -134,6 +108,7 @@ jobs:
             cat > .env << 'ENVEOF'
             GOOGLE_SHEET_ID=${{ secrets.GOOGLE_SHEET_ID }}
             GOOGLE_DRIVE_FOLDER_ID=${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+            GOOGLE_OAUTH_TOKEN=${{ secrets.GOOGLE_OAUTH_TOKEN }}
             GOOGLE_SERVICE_ACCOUNT_JSON=${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
             ENVEOF
             
