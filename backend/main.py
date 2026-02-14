@@ -496,6 +496,39 @@ def count_records_for_month_from_data(records: List[Dict], month: str) -> int:
     
     return count
 
+def sum_reviews_for_month_from_data(records: List[Dict], month: str) -> int:
+    """Подсчитывает СУММУ отзывов (факт) за месяц"""
+    total = 0
+    for record in records:
+        record_date = record.get('Дата отправки', '')
+        if record_date:
+            try:
+                date_obj = datetime.strptime(record_date.split()[0], "%Y-%m-%d")
+                record_month = date_obj.strftime("%B %Y")
+                
+                months_ru = {
+                    'January': 'Январь', 'February': 'Февраль', 'March': 'Март',
+                    'April': 'Апрель', 'May': 'Май', 'June': 'Июнь',
+                    'July': 'Июль', 'August': 'Август', 'September': 'Сентябрь',
+                    'October': 'Октябрь', 'November': 'Ноябрь', 'December': 'Декабрь'
+                }
+                
+                month_en = record_month.split()[0]
+                year = record_month.split()[1]
+                record_month_ru = f"{months_ru.get(month_en, month_en)} {year}"
+                
+                if record_month_ru == month:
+                    # Суммируем факт отзывов
+                    fact = record.get('Факт', 0) or record.get('Факт отзывов', 0)
+                    try:
+                        total += int(fact)
+                    except:
+                        continue
+            except:
+                continue
+    
+    return total
+
 # ============= ЭНДПОИНТЫ =============
 
 @app.get("/health")
@@ -1181,7 +1214,8 @@ def generate_branch_summary(branch_name: str, summary: BranchSummary):
                 "goal": BRANCH_GOALS["weekly_reports"]
             },
             "Отзывы": {
-                "current": count_records_for_month_from_data(all_data.get("Отзывы", []), summary.month),
+                # ИСПРАВЛЕНИЕ: Для отзывов суммируем факты, а не считаем записи
+                "current": sum_reviews_for_month_from_data(all_data.get("Отзывы", []), summary.month),
                 "goal": BRANCH_GOALS["reviews"]
             },
             "Новые сотрудники": {

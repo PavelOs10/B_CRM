@@ -1656,13 +1656,21 @@ const BranchSummaryPage = ({ branch, showToast }) => {
                         <td className="px-4 py-3 text-sm">{item['Текущее количество']}</td>
                         <td className="px-4 py-3 text-sm">{item['Цель на месяц']}</td>
                         <td className="px-4 py-3">
-                          <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                            item['Выполнение %'] >= 100 ? 'bg-green-100 text-green-800' : 
-                            item['Выполнение %'] >= 75 ? 'bg-yellow-100 text-yellow-800' : 
-                            'bg-red-100 text-red-800'
-                          }`}>
-                            {item['Выполнение %']}%
-                          </span>
+                          {(() => {
+                            // Исправляем процент - округляем до 1 знака
+                            const percent = parseFloat(item['Выполнение %']) || 0;
+                            const roundedPercent = Math.round(percent * 10) / 10;
+                            
+                            return (
+                              <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                                roundedPercent >= 100 ? 'bg-green-100 text-green-800' : 
+                                roundedPercent >= 75 ? 'bg-yellow-100 text-yellow-800' : 
+                                'bg-red-100 text-red-800'
+                              }`}>
+                                {roundedPercent}%
+                              </span>
+                            );
+                          })()}
                         </td>
                       </tr>
                     ))}
