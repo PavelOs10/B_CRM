@@ -1131,22 +1131,75 @@ def get_reviews(branch_name: str):
 
 @app.post("/branch-summary/{branch_name}")
 def generate_branch_summary(branch_name: str, summary: BranchSummary):
-    """Генерация итогового отчета филиала"""
+    """Генерация итогового отчета филиала с расчетом всех метрик"""
     try:
         client = get_sheets_client()
         spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
         
+        # Получаем все данные для расчета метрик
+        sheet_names = [
+            "Утренние мероприятия",
+            "Полевые выходы",
+            "One-on-One",
+            "Планы мастеров",
+            "Еженедельные показатели",
+            "Отзывы",
+            "Адаптация новичков"
+        ]
+        
+        all_data = get_all_sheet_data_batch(client, spreadsheet_id, sheet_names)
+        
+        # Подсчитываем метрики для указанного месяца
+        metrics = {
+            "Утренние мероприятия": {
+                "current": count_records_for_month_from_data(all_data.get("Утренние мероприятия", []), summary.month),
+                "goal": BRANCH_GOALS["morning_events"]
+            },
+            "Полевые выходы": {
+                "current": count_records_for_month_from_data(all_data.get("Полевые выходы", []), summary.month),
+                "goal": BRANCH_GOALS["field_visits"]
+            },
+            "One-on-One": {
+                "current": count_records_for_month_from_data(all_data.get("One-on-One", []), summary.month),
+                "goal": BRANCH_GOALS["one_on_one"]
+            },
+            "Планы мастеров": {
+                "current": count_records_for_month_from_data(all_data.get("Планы мастеров", []), summary.month),
+                "goal": BRANCH_GOALS["master_plans"]
+            },
+            "Еженедельные отчёты": {
+                "current": count_records_for_month_from_data(all_data.get("Еженедельные показатели", []), summary.month),
+                "goal": BRANCH_GOALS["weekly_reports"]
+            },
+            "Отзывы": {
+                "current": count_records_for_month_from_data(all_data.get("Отзывы", []), summary.month),
+                "goal": BRANCH_GOALS["reviews"]
+            },
+            "Новые сотрудники": {
+                "current": count_records_for_month_from_data(all_data.get("Адаптация новичков", []), summary.month),
+                "goal": BRANCH_GOALS["new_employees"]
+            }
+        }
+        
+        # Создаем/получаем лист для сводок
         sheet_name = "Итоговые отчеты"
-        headers = ["Дата отправки", "Руководитель", "Месяц"]
+        headers = ["Дата отправки", "Руководитель", "Месяц", "Метрика", "Текущее количество", "Цель на месяц", "Выполнение %"]
         worksheet = ensure_sheet_exists(client, spreadsheet_id, sheet_name, headers)
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        row = [
-            timestamp,
-            str(summary.manager),
-            str(summary.month)
-        ]
-        insert_row_at_top(worksheet, row)
+        # Добавляем строку для каждой метрики
+        for metric_name, metric_data in metrics.items():
+            percentage = round((metric_data["current"] / metric_data["goal"]) * 100, 1) if metric_data["goal"] > 0 else 0
+            row = [
+                timestamp,
+                str(summary.manager),
+                str(summary.month),
+                metric_name,
+                int(metric_data["current"]),
+                int(metric_data["goal"]),
+                float(percentage)
+            ]
+            insert_row_at_top(worksheet, row)
         
         clear_cache_for_branch(branch_name)
         

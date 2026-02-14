@@ -922,18 +922,42 @@ const FieldVisitsPage = ({ branch, showToast }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {history.map((item, i) => (
-                <tr key={i} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Дата']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{item['Имя мастера']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Качество стрижки']}/10</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Качество обслуживания']}/10</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Доп. услуги (оценка)']}/10</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Косметика (оценка)']}/10</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Стандарты (оценка)']}/10</td>
-                  <td className="px-6 py-4 whitespace-nowrap"><span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${(item['Общая оценка'] || 0) >= 8 ? 'bg-green-100 text-green-800' : (item['Общая оценка'] || 0) >= 6 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>{item['Общая оценка'] || 'N/A'}/10</span></td>
-                </tr>
-              ))}
+              {history.map((item, i) => {
+                // Вычисляем общую оценку, если она отсутствует в данных
+                let avgRating = item['Общая оценка'];
+                if (!avgRating || avgRating === '' || isNaN(avgRating)) {
+                  // Пересчитываем из имеющихся оценок
+                  const ratings = [
+                    parseFloat(item['Качество стрижки']) || 0,
+                    parseFloat(item['Качество обслуживания']) || 0,
+                    parseFloat(item['Доп. услуги (оценка)']) || 0,
+                    parseFloat(item['Косметика (оценка)']) || 0,
+                    parseFloat(item['Стандарты (оценка)']) || 0
+                  ];
+                  avgRating = (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1);
+                }
+                
+                return (
+                  <tr key={i} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Дата']}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{item['Имя мастера']}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Качество стрижки']}/10</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Качество обслуживания']}/10</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Доп. услуги (оценка)']}/10</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Косметика (оценка)']}/10</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Стандарты (оценка)']}/10</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                        parseFloat(avgRating) >= 8 ? 'bg-green-100 text-green-800' : 
+                        parseFloat(avgRating) >= 6 ? 'bg-yellow-100 text-yellow-800' : 
+                        'bg-red-100 text-red-800'
+                      }`}>
+                        {avgRating}/10
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1184,22 +1208,34 @@ const NewbieAdaptationPage = ({ branch, showToast }) => {
         </div>
       </form>
       ) : (
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div className="bg-white rounded-xl shadow-sm overflow-x-auto">
           <table className="w-full">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Дата начала</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Имя</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Статус</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Практика стрижки</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Основы iClient</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Дата отправки</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Дата начала</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Имя</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Практика стрижки</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Стандарты обслуживания</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Гигиена/санитария</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Доп. услуги</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Продажи косметики</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Основы iClient</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Статус</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {history.map((item, i) => (
                 <tr key={i} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item['Дата отправки']}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Дата начала']}</td>
-                  <td className="px-6 py-4 text-sm font-medium">{item['Имя']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{item['Имя']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Практика стрижки']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Стандарты обслуживания']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Гигиена/санитария']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Доп. услуги']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Продажи косметики']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Основы iClient']}</td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
                       item['Статус'] === 'Завершена' ? 'bg-green-100 text-green-800' : 
@@ -1209,8 +1245,6 @@ const NewbieAdaptationPage = ({ branch, showToast }) => {
                       {item['Статус']}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-sm">{item['Практика стрижки']}</td>
-                  <td className="px-6 py-4 text-sm">{item['Основы iClient']}</td>
                 </tr>
               ))}
             </tbody>
@@ -1289,10 +1323,40 @@ const MasterPlansPage = ({ branch, showToast }) => {
         </div>
       </form>
 
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+      <div className="bg-white rounded-xl shadow-sm overflow-x-auto">
         <table className="w-full">
-          <thead className="bg-gray-50"><tr><th className="px-6 py-3 text-left">Месяц</th><th className="px-6 py-3 text-left">Мастер</th><th className="px-6 py-3 text-left">Ср. чек %</th><th className="px-6 py-3 text-left">Продажи %</th></tr></thead>
-          <tbody className="divide-y">{history.map((item, i) => (<tr key={i}><td className="px-6 py-4">{item['Месяц']}</td><td className="px-6 py-4">{item['Имя мастера']}</td><td className="px-6 py-4">{item['Выполнение среднего чека %']}%</td><td className="px-6 py-4">{item['Выполнение продаж %']}%</td></tr>))}</tbody>
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Дата отправки</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Месяц</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Мастер</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Ср. чек (план)</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Ср. чек (факт)</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Доп. услуги (план)</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Доп. услуги (факт)</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Продажи (план)</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Продажи (факт)</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">ЗП (план)</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">ЗП (факт)</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {history.map((item, i) => (
+              <tr key={i} className="hover:bg-gray-50">
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item['Дата отправки']}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{item['Месяц']}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Имя мастера']}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Средний чек (план)']}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Средний чек (факт)']}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Доп. услуги (план)']}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Доп. услуги (факт)']}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Продажи (план)']}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Продажи (факт)']}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['ЗП (план)']}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['ЗП (факт)']}</td>
+              </tr>
+            ))}
+          </tbody>
         </table>
       </div>
     </div>
@@ -1320,7 +1384,8 @@ const ReviewsPage = ({ branch, showToast }) => {
   const loadHistory = async () => { try { const data = await api.request(`/reviews/${branch.name}`); setHistory(data.data || []); } catch (err) { console.error(err); } };
   useEffect(() => { loadHistory(); }, []);
 
-  const totalReviews = history.reduce((sum, item) => sum + (item['Факт отзывов'] || 0), 0);
+  const totalReviews = history.reduce((sum, item) => sum + (item['Факт'] || 0), 0);
+  const totalPercentage = history.length > 0 ? Math.round((totalReviews / 52) * 100) : 0;
 
   return (
     <div className="space-y-6">
@@ -1344,18 +1409,63 @@ const ReviewsPage = ({ branch, showToast }) => {
 
       {history.length > 0 && (
         <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-6 rounded-xl">
-          <h3 className="text-lg font-semibold mb-2">Сводка за месяц</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div><span className="text-gray-600">Всего отзывов:</span> <span className="font-bold text-2xl">{totalReviews}</span></div>
-            <div><span className="text-gray-600">Целевой показатель:</span> <span className="font-bold text-2xl">52</span></div>
+          <h3 className="text-lg font-semibold mb-4">Сводка за месяц</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-white p-4 rounded-lg shadow-sm">
+              <span className="text-gray-600 text-sm">Всего отзывов:</span> 
+              <div className="font-bold text-3xl text-blue-600">{totalReviews}</div>
+            </div>
+            <div className="bg-white p-4 rounded-lg shadow-sm">
+              <span className="text-gray-600 text-sm">Целевой показатель:</span> 
+              <div className="font-bold text-3xl text-purple-600">52</div>
+            </div>
+            <div className="bg-white p-4 rounded-lg shadow-sm">
+              <span className="text-gray-600 text-sm">Процент выполнения:</span> 
+              <div className={`font-bold text-3xl ${totalPercentage >= 100 ? 'text-green-600' : totalPercentage >= 75 ? 'text-yellow-600' : 'text-red-600'}`}>
+                {totalPercentage}%
+              </div>
+            </div>
           </div>
         </div>
       )}
 
       <div className="bg-white rounded-xl shadow-sm overflow-hidden">
         <table className="w-full">
-          <thead className="bg-gray-50"><tr><th className="px-6 py-3 text-left">Неделя</th><th className="px-6 py-3 text-left">План</th><th className="px-6 py-3 text-left">Факт</th><th className="px-6 py-3 text-left">Выполнение %</th></tr></thead>
-          <tbody className="divide-y">{history.map((item, i) => (<tr key={i}><td className="px-6 py-4">{item['Неделя']}</td><td className="px-6 py-4">13</td><td className="px-6 py-4">{item['Факт отзывов']}</td><td className="px-6 py-4"><span className={`px-2 py-1 rounded text-sm ${item['Выполнение недели %'] >= 100 ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>{item['Выполнение недели %']}%</span></td></tr>))}</tbody>
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Дата отправки</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Неделя</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Управляющий</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">План</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Факт</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Выполнение %</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {history.map((item, i) => {
+              const plan = item['План'] || 13;
+              const fact = item['Факт'] || 0;
+              const percentage = Math.round((fact / plan) * 100);
+              return (
+                <tr key={i} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item['Дата отправки']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Неделя']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Имя руководителя']}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{plan}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{fact}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                      percentage >= 100 ? 'bg-green-100 text-green-800' : 
+                      percentage >= 75 ? 'bg-yellow-100 text-yellow-800' : 
+                      'bg-red-100 text-red-800'
+                    }`}>
+                      {percentage}%
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
         </table>
       </div>
     </div>
@@ -1426,10 +1536,74 @@ const BranchSummaryPage = ({ branch, showToast }) => {
       </form>
 
       <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-50"><tr><th className="px-6 py-3 text-left">Метрика</th><th className="px-6 py-3 text-left">Текущее</th><th className="px-6 py-3 text-left">Цель</th><th className="px-6 py-3 text-left">%</th></tr></thead>
-          <tbody className="divide-y">{history.map((item, i) => (<tr key={i}><td className="px-6 py-4 font-medium">{item['Метрика']}</td><td className="px-6 py-4">{item['Текущее количество']}</td><td className="px-6 py-4">{item['Цель на месяц']}</td><td className="px-6 py-4"><span className={`px-3 py-1 rounded text-sm font-medium ${item['Выполнение %'] >= 100 ? 'bg-green-100 text-green-800' : item['Выполнение %'] >= 75 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>{item['Выполнение %']}%</span></td></tr>))}</tbody>
-        </table>
+        <div className="p-6">
+          <h3 className="text-lg font-semibold mb-4">История сводок</h3>
+          {(() => {
+            // Группируем записи по месяцу и управляющему
+            const grouped = {};
+            history.forEach(item => {
+              const key = `${item['Месяц']}_${item['Руководитель']}`;
+              if (!grouped[key]) {
+                grouped[key] = {
+                  month: item['Месяц'],
+                  manager: item['Руководитель'],
+                  date: item['Дата отправки'],
+                  metrics: []
+                };
+              }
+              grouped[key].metrics.push(item);
+            });
+            
+            return Object.values(grouped).map((group, idx) => (
+              <div key={idx} className="mb-6 border border-gray-200 rounded-lg p-4">
+                <div className="flex justify-between items-center mb-4 pb-3 border-b">
+                  <div>
+                    <h4 className="font-semibold text-lg">{group.month}</h4>
+                    <p className="text-sm text-gray-600">Управляющий: {group.manager}</p>
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    Дата формирования: {group.date}
+                  </div>
+                </div>
+                <table className="w-full">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Метрика</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Текущее</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Цель</th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Выполнение</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {group.metrics.map((item, i) => (
+                      <tr key={i} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 font-medium text-sm">{item['Метрика']}</td>
+                        <td className="px-4 py-3 text-sm">{item['Текущее количество']}</td>
+                        <td className="px-4 py-3 text-sm">{item['Цель на месяц']}</td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+                            item['Выполнение %'] >= 100 ? 'bg-green-100 text-green-800' : 
+                            item['Выполнение %'] >= 75 ? 'bg-yellow-100 text-yellow-800' : 
+                            'bg-red-100 text-red-800'
+                          }`}>
+                            {item['Выполнение %']}%
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ));
+          })()}
+          
+          {history.length === 0 && (
+            <div className="text-center py-8 text-gray-500">
+              <p>Нет сформированных сводок</p>
+              <p className="text-sm mt-2">Заполните форму выше и нажмите "Сформировать"</p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
