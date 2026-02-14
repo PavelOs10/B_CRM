@@ -171,6 +171,9 @@ def create_branch_spreadsheet(client, branch_name: str) -> str:
         # Получаем ID папки из переменной окружения (опционально)
         folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID', None)
         
+        logger.info(f"🔍 ДИАГНОСТИКА: GOOGLE_DRIVE_FOLDER_ID = '{folder_id}'")
+        logger.info(f"🔍 ДИАГНОСТИКА: Все env переменные с GOOGLE: {[k for k in os.environ.keys() if 'GOOGLE' in k]}")
+        
         # Создаем credentials для Drive API
         creds = Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPES)
         drive_service = build('drive', 'v3', credentials=creds)
@@ -184,6 +187,11 @@ def create_branch_spreadsheet(client, branch_name: str) -> str:
         # Если указана папка, создаём в ней
         if folder_id:
             file_metadata['parents'] = [folder_id]
+            logger.info(f"✅ Создаём таблицу в папке: {folder_id}")
+        else:
+            logger.warning("⚠️ GOOGLE_DRIVE_FOLDER_ID не указан! Создание на диске сервисного аккаунта!")
+        
+        logger.info(f"📝 Метаданные файла: {file_metadata}")
         
         # Создаём таблицу через Drive API
         file = drive_service.files().create(
@@ -192,6 +200,7 @@ def create_branch_spreadsheet(client, branch_name: str) -> str:
         ).execute()
         
         spreadsheet_id = file.get('id')
+        logger.info(f"✅ Таблица создана! ID: {spreadsheet_id}")
         
         # Даём права сервисному аккаунту на редактирование
         permission = {
@@ -205,18 +214,21 @@ def create_branch_spreadsheet(client, branch_name: str) -> str:
             fields='id'
         ).execute()
         
-        logger.info(f"Создана таблица для филиала '{branch_name}' с ID: {spreadsheet_id}")
+        logger.info(f"✅ Создана таблица для филиала '{branch_name}' с ID: {spreadsheet_id}")
         return spreadsheet_id
         
     except Exception as e:
-        logger.error(f"Ошибка создания таблицы: {e}")
+        logger.error(f"❌ Ошибка создания таблицы: {e}")
+        logger.error(f"❌ Тип ошибки: {type(e)}")
         
         # Проверяем, не проблема ли с квотой
         error_str = str(e)
         if 'storageQuotaExceeded' in error_str or '403' in error_str:
+            # Добавляем информацию о том, была ли указана папка
+            folder_status = f"GOOGLE_DRIVE_FOLDER_ID = '{folder_id}'" if folder_id else "GOOGLE_DRIVE_FOLDER_ID НЕ УКАЗАН!"
             raise HTTPException(
                 status_code=507,
-                detail="Превышена квота хранилища. Решение: 1) Укажите GOOGLE_DRIVE_FOLDER_ID в .env (ID папки на вашем личном Google Drive). 2) Дайте доступ сервисному аккаунту к этой папке. 3) Или очистите старые таблицы."
+                detail=f"Превышена квота хранилища. {folder_status}. Решения: 1) Проверьте что ID папки правильный: {folder_id}. 2) Убедитесь что сервисный аккаунт ({SERVICE_ACCOUNT_INFO.get('client_email', 'N/A')}) имеет доступ к папке. 3) Проверьте логи выше для деталей."
             )
         raise HTTPException(status_code=500, detail=f"Не удалось создать таблицу: {error_str}")
 
