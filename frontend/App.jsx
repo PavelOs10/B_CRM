@@ -1,4 +1,3 @@
-
 const { useState, useEffect, useRef } = React;
 
 // ==================== CONFIG ====================
@@ -13,7 +12,6 @@ const BRANCH_GOALS = {
   reviews: 60,
   new_employees: 10
 };
-
 // ==================== API ====================
 const api = {
   async request(endpoint, options = {}) {
@@ -839,7 +837,7 @@ const FieldVisitsPage = ({ branch, showToast }) => {
   const updateVisit = (index, field, value) => { const newVisits = [...visits]; newVisits[index][field] = value; setVisits(newVisits); };
   
   const calculateAverage = (visit) => { 
-    return ((visit.haircut_quality + visit.service_quality + visit.additional_services_rating + visit.cosmetics_rating + visit.standards_rating) / 5).toFixed(1); 
+    return ((visit.haircut_quality + visit.service_quality + visit.additional_services_rating + visit.cosmetics_rating + visit.standards_rating) / 5).toFixed(1); // Среднее из 5 оценок 
   };
 
   const handleSubmit = async (e) => {
