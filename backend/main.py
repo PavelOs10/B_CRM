@@ -301,7 +301,15 @@ def get_branch_spreadsheet_id(client, branch_name: str) -> str:
     cache_key = f"spreadsheet_id_{branch_name}"
     cached = get_from_cache(cache_key)
     if cached:
-        return cached
+        # Проверяем что таблица существует
+        try:
+            client.open_by_key(cached)
+            return cached
+        except gspread.exceptions.SpreadsheetNotFound:
+            logger.warning(f"⚠️ Таблица {cached} не найдена, очищаем кеш")
+            del cache_store[cache_key]
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка проверки таблицы: {e}")
     
     try:
         spreadsheet = client.open_by_key(MASTER_SPREADSHEET_ID)
@@ -310,26 +318,54 @@ def get_branch_spreadsheet_id(client, branch_name: str) -> str:
         
         for record in records:
             if record.get('Название') == branch_name:
-                sheet_id = record.get('ID таблицы', '')
-                set_cache(cache_key, sheet_id)
-                return sheet_id
+                # Пробуем разные варианты названия колонки
+                sheet_id = (record.get('ID таблицы', '') or 
+                           record.get('Spreadsheet ID', '') or
+                           record.get('ID Таблицы', ''))
+                
+                if not sheet_id:
+                    raise HTTPException(
+                        status_code=500, 
+                        detail=f"ID таблицы для филиала '{branch_name}' пуст"
+                    )
+                
+                # Проверяем что таблица существует
+                try:
+                    client.open_by_key(sheet_id)
+                    set_cache(cache_key, sheet_id)
+                    logger.info(f"✅ ID таблицы для '{branch_name}': {sheet_id}")
+                    return sheet_id
+                except gspread.exceptions.SpreadsheetNotFound:
+                    raise HTTPException(
+                        status_code=404, 
+                        detail=f"Таблица {sheet_id} не найдена. Возможно она была удалена."
+                    )
         
-        raise HTTPException(status_code=404, detail=f"Филиал {branch_name} не найден")
+        raise HTTPException(status_code=404, detail=f"Филиал '{branch_name}' не найден в главной таблице")
     except gspread.exceptions.WorksheetNotFound:
         raise HTTPException(status_code=500, detail="Лист 'Филиалы' не найден в главной таблице")
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Ошибка получения ID таблицы: {e}")
+        logger.error(f"❌ Ошибка получения ID таблицы: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 def ensure_sheet_exists(client, spreadsheet_id: str, sheet_name: str, headers: List[str]):
     """Проверяет существование листа, создаёт если нужно"""
     try:
-        spreadsheet = client.open_by_key(spreadsheet_id)
+        try:
+            spreadsheet = client.open_by_key(spreadsheet_id)
+        except gspread.exceptions.SpreadsheetNotFound:
+            logger.error(f"❌ Таблица {spreadsheet_id} не найдена")
+            raise HTTPException(
+                status_code=404,
+                detail="Таблица филиала не найдена. Пожалуйста, обратитесь к администратору."
+            )
         
         try:
             worksheet = spreadsheet.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound:
-            logger.info(f"Создание листа: {sheet_name}")
+            logger.info(f"📝 Создание листа: {sheet_name}")
             worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=20)
             worksheet.append_row(headers)
             return worksheet
@@ -337,8 +373,10 @@ def ensure_sheet_exists(client, spreadsheet_id: str, sheet_name: str, headers: L
         if not worksheet.row_values(1):
             worksheet.append_row(headers)
         return worksheet
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
+        logger.error(f"❌ Ошибка ensure_sheet_exists: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 def insert_row_at_top(worksheet, data: List[Any]):
@@ -389,7 +427,16 @@ def get_all_sheet_data_batch(client, spreadsheet_id: str, sheet_names: List[str]
         return cached
     
     try:
-        spreadsheet = client.open_by_key(spreadsheet_id)
+        # Проверяем что таблица существует
+        try:
+            spreadsheet = client.open_by_key(spreadsheet_id)
+        except gspread.exceptions.SpreadsheetNotFound:
+            logger.error(f"❌ Таблица {spreadsheet_id} не найдена")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Таблица не найдена. Возможно она была удалена из Google Drive."
+            )
+        
         result = {}
         
         # Получаем все листы одним запросом
@@ -406,13 +453,17 @@ def get_all_sheet_data_batch(client, spreadsheet_id: str, sheet_names: List[str]
                     logger.warning(f"⚠️ Ошибка чтения '{sheet_name}': {e}")
                     result[sheet_name] = []
             else:
+                logger.info(f"ℹ️ Лист '{sheet_name}' не существует, будет создан при первой записи")
                 result[sheet_name] = []
         
         set_cache(cache_key, result)
         return result
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ Ошибка batch-загрузки: {e}")
+        # Возвращаем пустые данные вместо ошибки
         return {name: [] for name in sheet_names}
 
 def count_records_for_month_from_data(records: List[Dict], month: str) -> int:
