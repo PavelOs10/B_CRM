@@ -1208,7 +1208,14 @@ def generate_branch_summary(branch_name: str, summary: BranchSummary):
             insert_row_at_top(worksheet, row)
             logger.info(f"✅ Добавлена строка: {metric_name}")
         
+        # ВАЖНО: Очищаем кеш ДО отправки ответа
         clear_cache_for_branch(branch_name)
+        # Также очищаем глобальный кеш для этой таблицы
+        cache_key = f"branch_summary_{branch_name}"
+        if cache_key in cache_store:
+            del cache_store[cache_key]
+            logger.info(f"🗑️ Очищен кеш сводки: {cache_key}")
+        
         logger.info(f"✅ Сводка успешно сформирована!")
         
         return {"success": True, "message": "Отчет успешно создан"}
@@ -1224,17 +1231,22 @@ def get_branch_summary(branch_name: str):
     cache_key = f"branch_summary_{branch_name}"
     cached = get_from_cache(cache_key)
     if cached:
+        logger.info(f"📦 Возвращаем кешированную сводку ({len(cached.get('data', []))} записей)")
         return cached
     
     try:
+        logger.info(f"🔍 Загружаем сводку из Google Sheets для '{branch_name}'")
         client = get_sheets_client()
         spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
         spreadsheet = client.open_by_key(spreadsheet_id)
         worksheet = spreadsheet.worksheet("Итоговые отчеты")
         data = worksheet.get_all_records()
         
+        logger.info(f"✅ Загружено {len(data)} записей сводки")
+        
         result = {"success": True, "data": data}
         set_cache(cache_key, result)
         return result
-    except:
+    except Exception as e:
+        logger.error(f"❌ Ошибка загрузки сводки: {e}")
         return {"success": True, "data": []}

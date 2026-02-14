@@ -1545,11 +1545,26 @@ const BranchSummaryPage = ({ branch, showToast }) => {
     try {
       await api.request(`/branch-summary/${branch.name}`, { method: 'POST', body: JSON.stringify(summary) });
       showToast('Сводка успешно сформирована!');
-      loadHistory();
+      
+      // Очищаем кеш на бэкенде
+      await api.request(`/api/cache-clear/${branch.name}`, { method: 'POST' });
+      
+      // Небольшая задержка для того, чтобы данные точно записались
+      setTimeout(() => {
+        loadHistory();
+      }, 500);
     } catch (err) { showToast(err.message, 'error'); } finally { setLoading(false); }
   };
 
-  const loadHistory = async () => { try { const data = await api.request(`/branch-summary/${branch.name}`); setHistory(data.data || []); } catch (err) { console.error(err); } };
+  const loadHistory = async () => { 
+    try { 
+      const data = await api.request(`/branch-summary/${branch.name}`); 
+      console.log('Loaded history:', data); // Для отладки
+      setHistory(data.data || []); 
+    } catch (err) { 
+      console.error('Error loading history:', err); 
+    } 
+  };
   useEffect(() => { loadHistory(); }, []);
 
   return (
