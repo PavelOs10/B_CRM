@@ -1751,8 +1751,11 @@ const BranchSummaryPage = ({ branch, showToast }) => {
                         <td className="px-4 py-3 text-sm">{item['Цель на месяц']}</td>
                         <td className="px-4 py-3">
                           {(() => {
-                            const percent = parseFloat(item['Выполнение %']) || 0;
-                            const roundedPercent = Math.round(percent * 10) / 10;
+                            // Вычисляем процент из current/goal, а не из хранимого значения
+                            // (хранимое значение может быть искажено локалью Google Sheets)
+                            const current = parseFloat(item['Текущее количество']) || 0;
+                            const goal = parseFloat(item['Цель на месяц']) || 1;
+                            const roundedPercent = Math.round((current / goal) * 1000) / 10;
                             
                             return (
                               <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
