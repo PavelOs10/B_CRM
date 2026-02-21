@@ -12,11 +12,18 @@ import secrets
 import logging
 from functools import lru_cache
 import time
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+import csv
+import io
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="BarberCRM API", version="4.2.0")
+app = FastAPI(title="BarberCRM API", version="4.3.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,6 +34,13 @@ app.add_middleware(
 )
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+
+# ============= EMAIL НАСТРОЙКИ =============
+REPORT_EMAIL_TO = os.getenv('REPORT_EMAIL_TO', '')  # Куда отправлять отчёты
+SMTP_HOST = os.getenv('SMTP_HOST', 'smtp.gmail.com')
+SMTP_PORT = int(os.getenv('SMTP_PORT', '587'))
+SMTP_USER = os.getenv('SMTP_USER', '')  # Email отправителя
+SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', '')  # App Password для Gmail
 
 # ============= КЕШИРОВАНИЕ =============
 
@@ -84,7 +98,7 @@ BRANCH_GOALS = {
     "one_on_one": 6,
     "weekly_reports": 4,
     "master_plans": 10,
-    "reviews": 60,
+    "reviews": 52,
     "new_employees": 10
 }
 
@@ -533,7 +547,7 @@ def sum_reviews_for_month_from_data(records: List[Dict], month: str) -> int:
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy", "version": "4.2.0", "cache_enabled": True, "cache_ttl": CACHE_TTL}
+    return {"status": "healthy", "version": "4.3.0", "cache_enabled": True, "cache_ttl": CACHE_TTL}
 
 @app.get("/api/cache-stats")
 def get_cache_stats():
@@ -719,7 +733,7 @@ def get_dashboard_summary(branch_name: str):
                 "label": "Еженедельные отчёты"
             },
             "reviews": {
-                "current": count_records_for_month_from_data(all_data.get("Отзывы", []), current_month),
+                "current": sum_reviews_for_month_from_data(all_data.get("Отзывы", []), current_month),
                 "goal": BRANCH_GOALS["reviews"],
                 "percentage": 0,
                 "label": "Отзывы"
@@ -1177,6 +1191,9 @@ def generate_branch_summary(branch_name: str, summary: BranchSummary):
         client = get_sheets_client()
         spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
         
+        # ВАЖНО: Очищаем кеш ПЕРЕД загрузкой данных, чтобы получить актуальные данные
+        clear_cache_for_branch(branch_name)
+        
         # Получаем все данные для расчета метрик
         sheet_names = [
             "Утренние мероприятия",
@@ -1214,7 +1231,6 @@ def generate_branch_summary(branch_name: str, summary: BranchSummary):
                 "goal": BRANCH_GOALS["weekly_reports"]
             },
             "Отзывы": {
-                # ИСПРАВЛЕНИЕ: Для отзывов суммируем факты, а не считаем записи
                 "current": sum_reviews_for_month_from_data(all_data.get("Отзывы", []), summary.month),
                 "goal": BRANCH_GOALS["reviews"]
             },
@@ -1232,6 +1248,26 @@ def generate_branch_summary(branch_name: str, summary: BranchSummary):
         sheet_name = "Итоговые отчеты"
         headers = ["Дата отправки", "Руководитель", "Месяц", "Метрика", "Текущее количество", "Цель на месяц", "Выполнение %"]
         worksheet = ensure_sheet_exists(client, spreadsheet_id, sheet_name, headers)
+        
+        # ИСПРАВЛЕНИЕ: Удаляем старые записи за этот же месяц перед вставкой новых
+        try:
+            all_values = worksheet.get_all_values()
+            if len(all_values) > 1:
+                # Ищем строки с тем же месяцем (колонка 2, индекс с 0)
+                rows_to_delete = []
+                for row_idx in range(1, len(all_values)):  # Пропускаем заголовок
+                    if len(all_values[row_idx]) > 2 and all_values[row_idx][2] == summary.month:
+                        rows_to_delete.append(row_idx + 1)  # +1 т.к. gspread считает с 1
+                
+                # Удаляем строки снизу вверх, чтобы не сбивались индексы
+                if rows_to_delete:
+                    logger.info(f"🗑️ Удаляем {len(rows_to_delete)} старых записей за '{summary.month}'")
+                    for row_idx in sorted(rows_to_delete, reverse=True):
+                        worksheet.delete_rows(row_idx)
+                    logger.info(f"✅ Старые записи удалены")
+        except Exception as del_err:
+            logger.warning(f"⚠️ Ошибка при удалении старых записей: {del_err}")
+        
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         # Добавляем строку для каждой метрики
@@ -1249,13 +1285,8 @@ def generate_branch_summary(branch_name: str, summary: BranchSummary):
             insert_row_at_top(worksheet, row)
             logger.info(f"✅ Добавлена строка: {metric_name}")
         
-        # ВАЖНО: Очищаем кеш ДО отправки ответа
+        # Очищаем кеш ПОСЛЕ записи
         clear_cache_for_branch(branch_name)
-        # Также очищаем глобальный кеш для этой таблицы
-        cache_key = f"branch_summary_{branch_name}"
-        if cache_key in cache_store:
-            del cache_store[cache_key]
-            logger.info(f"🗑️ Очищен кеш сводки: {cache_key}")
         
         logger.info(f"✅ Сводка успешно сформирована!")
         
@@ -1318,3 +1349,205 @@ def get_branch_summary(branch_name: str):
     except Exception as e:
         logger.error(f"❌ Ошибка загрузки сводки: {e}")
         return {"success": True, "data": []}
+
+# ============= ОТПРАВКА ОТЧЕТОВ НА EMAIL =============
+
+class EmailReportRequest(BaseModel):
+    period_type: str  # "day", "week", "month", "all"
+    custom_date: Optional[str] = None  # Для "day" - конкретная дата YYYY-MM-DD
+
+def get_period_filter_dates(period_type: str, custom_date: Optional[str] = None):
+    """Возвращает (start_date, end_date, period_label) для фильтрации"""
+    now = datetime.now()
+    
+    if period_type == "day":
+        if custom_date:
+            target = datetime.strptime(custom_date, "%Y-%m-%d")
+        else:
+            target = now
+        start = target.replace(hour=0, minute=0, second=0)
+        end = target.replace(hour=23, minute=59, second=59)
+        label = target.strftime("%d.%m.%Y")
+    elif period_type == "week":
+        # Текущая неделя (понедельник - воскресенье)
+        weekday = now.weekday()  # 0=пн
+        start = (now - timedelta(days=weekday)).replace(hour=0, minute=0, second=0)
+        end = (start + timedelta(days=6)).replace(hour=23, minute=59, second=59)
+        label = f"{start.strftime('%d.%m.%Y')} - {end.strftime('%d.%m.%Y')}"
+    elif period_type == "month":
+        # Текущий месяц
+        start = now.replace(day=1, hour=0, minute=0, second=0)
+        # Последний день месяца
+        if now.month == 12:
+            end = now.replace(year=now.year + 1, month=1, day=1) - timedelta(seconds=1)
+        else:
+            end = now.replace(month=now.month + 1, day=1) - timedelta(seconds=1)
+        months_ru = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+                     'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь']
+        label = f"{months_ru[now.month - 1]} {now.year}"
+    else:  # "all"
+        start = datetime(2020, 1, 1)
+        end = datetime(2099, 12, 31)
+        label = "Весь период"
+    
+    return start, end, label
+
+def filter_records_by_period(records: List[Dict], start: datetime, end: datetime) -> List[Dict]:
+    """Фильтрует записи по периоду"""
+    filtered = []
+    for record in records:
+        record_date_str = record.get('Дата отправки', '') or record.get('Дата', '')
+        if record_date_str:
+            try:
+                record_date = datetime.strptime(record_date_str.split()[0], "%Y-%m-%d")
+                if start <= record_date <= end:
+                    filtered.append(record)
+            except:
+                continue
+    return filtered
+
+def build_csv_from_records(records: List[Dict], sheet_name: str) -> str:
+    """Создаёт CSV-строку из списка записей"""
+    if not records:
+        return ""
+    
+    output = io.StringIO()
+    headers = list(records[0].keys())
+    writer = csv.DictWriter(output, fieldnames=headers)
+    writer.writeheader()
+    for record in records:
+        writer.writerow(record)
+    return output.getvalue()
+
+def send_email_with_attachments(to_email: str, subject: str, body_html: str, attachments: List[Dict]):
+    """
+    Отправляет email с вложениями через SMTP.
+    attachments: [{"filename": "...", "content": "csv_string"}]
+    """
+    if not SMTP_USER or not SMTP_PASSWORD:
+        raise HTTPException(status_code=500, detail="SMTP не настроен. Укажите SMTP_USER и SMTP_PASSWORD в переменных окружения.")
+    
+    if not to_email:
+        raise HTTPException(status_code=500, detail="REPORT_EMAIL_TO не настроен. Укажите email получателя в переменных окружения.")
+    
+    msg = MIMEMultipart()
+    msg['From'] = SMTP_USER
+    msg['To'] = to_email
+    msg['Subject'] = subject
+    
+    msg.attach(MIMEText(body_html, 'html', 'utf-8'))
+    
+    for att in attachments:
+        if att["content"]:
+            part = MIMEBase('text', 'csv')
+            part.set_payload(att["content"].encode('utf-8-sig'))  # utf-8-sig для корректного отображения в Excel
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f'attachment; filename="{att["filename"]}"')
+            msg.attach(part)
+    
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(msg)
+        logger.info(f"✅ Email отправлен на {to_email}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка отправки email: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка отправки email: {str(e)}")
+
+@app.post("/send-report/{branch_name}")
+def send_report_email(branch_name: str, request: EmailReportRequest):
+    """Отправляет отчёт из Google Sheets на email за выбранный период"""
+    try:
+        logger.info(f"📧 Отправка отчёта для '{branch_name}', период: '{request.period_type}'")
+        
+        client = get_sheets_client()
+        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
+        
+        # Определяем период
+        start, end, period_label = get_period_filter_dates(request.period_type, request.custom_date)
+        
+        # Загружаем все листы
+        sheet_names = [
+            "Утренние мероприятия",
+            "Полевые выходы",
+            "One-on-One",
+            "Планы мастеров",
+            "Еженедельные показатели",
+            "Отзывы",
+            "Адаптация новичков",
+            "Итоговые отчеты"
+        ]
+        
+        # Очищаем кеш чтобы получить свежие данные
+        clear_cache_for_branch(branch_name)
+        all_data = get_all_sheet_data_batch(client, spreadsheet_id, sheet_names)
+        
+        # Фильтруем и формируем CSV вложения
+        attachments = []
+        total_records = 0
+        
+        for sheet_name in sheet_names:
+            records = all_data.get(sheet_name, [])
+            if request.period_type != "all":
+                records = filter_records_by_period(records, start, end)
+            
+            if records:
+                csv_content = build_csv_from_records(records, sheet_name)
+                safe_name = sheet_name.replace(" ", "_").replace("/", "_")
+                attachments.append({
+                    "filename": f"{safe_name}.csv",
+                    "content": csv_content
+                })
+                total_records += len(records)
+        
+        if total_records == 0:
+            return {"success": False, "message": f"Нет данных за период: {period_label}"}
+        
+        # Формируем тему и тело письма
+        subject = f"Отчёт {branch_name} — {period_label}"
+        
+        body_html = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; color: #333;">
+            <h2>Отчёт по филиалу: {branch_name}</h2>
+            <p><strong>Период:</strong> {period_label}</p>
+            <p><strong>Дата формирования:</strong> {datetime.now().strftime('%d.%m.%Y %H:%M')}</p>
+            <hr>
+            <p>Во вложении {len(attachments)} таблиц ({total_records} записей):</p>
+            <ul>
+                {''.join(f"<li>{att['filename']}</li>" for att in attachments)}
+            </ul>
+            <hr>
+            <p style="color: #888; font-size: 12px;">Отчёт сформирован автоматически системой BarberCRM</p>
+        </body>
+        </html>
+        """
+        
+        send_email_with_attachments(REPORT_EMAIL_TO, subject, body_html, attachments)
+        
+        return {
+            "success": True, 
+            "message": f"Отчёт отправлен на {REPORT_EMAIL_TO}",
+            "period": period_label,
+            "sheets_count": len(attachments),
+            "total_records": total_records
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Ошибка отправки отчёта: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/email-config")
+def get_email_config():
+    """Проверяет настройки email"""
+    return {
+        "configured": bool(SMTP_USER and SMTP_PASSWORD and REPORT_EMAIL_TO),
+        "smtp_host": SMTP_HOST,
+        "smtp_user": SMTP_USER[:3] + "***" if SMTP_USER else "",
+        "report_email": REPORT_EMAIL_TO[:3] + "***" if REPORT_EMAIL_TO else ""
+    }

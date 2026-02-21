@@ -9,7 +9,7 @@ const BRANCH_GOALS = {
   one_on_one: 6,
   weekly_reports: 4,
   master_plans: 10,
-  reviews: 60,
+  reviews: 52,
   new_employees: 10
 };
 // ==================== API ====================
@@ -1444,8 +1444,8 @@ const ReviewsPage = ({ branch, showToast }) => {
   const loadHistory = async () => { try { const data = await api.request(`/reviews/${branch.name}`); setHistory(data.data || []); } catch (err) { console.error(err); } };
   useEffect(() => { loadHistory(); }, []);
 
-  const totalReviews = history.reduce((sum, item) => sum + (item['Факт'] || 0), 0);
-  const totalPercentage = history.length > 0 ? Math.round((totalReviews / 52) * 100) : 0;
+  const totalReviews = history.reduce((sum, item) => sum + (parseInt(item['Факт']) || 0), 0);
+  const totalPercentage = history.length > 0 ? Math.round((totalReviews / BRANCH_GOALS.reviews) * 100) : 0;
 
   return (
     <div className="space-y-6">
@@ -1477,7 +1477,7 @@ const ReviewsPage = ({ branch, showToast }) => {
             </div>
             <div className="bg-white p-4 rounded-lg shadow-sm">
               <span className="text-gray-600 text-sm">Целевой показатель:</span> 
-              <div className="font-bold text-3xl text-purple-600">52</div>
+              <div className="font-bold text-3xl text-purple-600">{BRANCH_GOALS.reviews}</div>
             </div>
             <div className="bg-white p-4 rounded-lg shadow-sm">
               <span className="text-gray-600 text-sm">Процент выполнения:</span> 
@@ -1538,6 +1538,21 @@ const BranchSummaryPage = ({ branch, showToast }) => {
   const [summary, setSummary] = useState({manager: branch.manager || '', month: getCurrentMonth()});
   const [loading, setLoading] = useState(false);
   const [history, setHistory] = useState([]);
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [emailConfigured, setEmailConfigured] = useState(false);
+
+  // Проверяем настройки email при загрузке
+  useEffect(() => {
+    const checkEmailConfig = async () => {
+      try {
+        const data = await api.request('/email-config');
+        setEmailConfigured(data.configured);
+      } catch (err) {
+        console.error('Email config check failed:', err);
+      }
+    };
+    checkEmailConfig();
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -1556,10 +1571,29 @@ const BranchSummaryPage = ({ branch, showToast }) => {
     } catch (err) { showToast(err.message, 'error'); } finally { setLoading(false); }
   };
 
+  const handleSendEmail = async (periodType) => {
+    setEmailLoading(true);
+    try {
+      const data = await api.request(`/send-report/${branch.name}`, { 
+        method: 'POST', 
+        body: JSON.stringify({ period_type: periodType }) 
+      });
+      if (data.success) {
+        showToast(`Отчёт отправлен! (${data.sheets_count} таблиц, ${data.total_records} записей)`);
+      } else {
+        showToast(data.message || 'Нет данных за выбранный период', 'error');
+      }
+    } catch (err) { 
+      showToast(err.message, 'error'); 
+    } finally { 
+      setEmailLoading(false); 
+    }
+  };
+
   const loadHistory = async () => { 
     try { 
       const data = await api.request(`/branch-summary/${branch.name}`); 
-      console.log('Loaded history:', data); // Для отладки
+      console.log('Loaded history:', data);
       setHistory(data.data || []); 
     } catch (err) { 
       console.error('Error loading history:', err); 
@@ -1589,7 +1623,18 @@ const BranchSummaryPage = ({ branch, showToast }) => {
           <FormInput label="Месяц" required>
             <select value={summary.month} onChange={(e) => setSummary({...summary, month: e.target.value})} className="w-full px-4 py-3 border rounded-lg" required>
               <option value="">Выбрать...</option>
-              {['Январь 2026', 'Февраль 2026', 'Март 2026', 'Апрель 2026', 'Май 2026', 'Июнь 2026', 'Июль 2026', 'Август 2026', 'Сентябрь 2026', 'Октябрь 2026', 'Ноябрь 2026', 'Декабрь 2026'].map(m => <option key={m} value={m}>{m}</option>)}
+              {(() => {
+                const now = new Date();
+                const months = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+                const options = [];
+                // Показываем текущий год и предыдущий
+                for (let y = now.getFullYear(); y >= now.getFullYear() - 1; y--) {
+                  for (let m = 11; m >= 0; m--) {
+                    options.push(`${months[m]} ${y}`);
+                  }
+                }
+                return options.map(m => <option key={m} value={m}>{m}</option>);
+              })()}
             </select>
           </FormInput>
         </div>
@@ -1607,8 +1652,57 @@ const BranchSummaryPage = ({ branch, showToast }) => {
           </div>
         </div>
 
-        <button type="submit" disabled={loading} className="mt-4 px-8 py-3 bg-blue-600 text-white rounded-lg">{loading ? 'Сформировать сводку' : 'Сформировать'}</button>
+        <button type="submit" disabled={loading} className="mt-4 px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+          {loading ? 'Формирование...' : 'Сформировать сводку'}
+        </button>
       </form>
+
+      {/* Блок отправки отчёта на email */}
+      <div className="bg-white p-6 rounded-xl shadow-sm">
+        <h3 className="text-lg font-semibold mb-4">📧 Отправить отчёт на email</h3>
+        {!emailConfigured ? (
+          <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-sm">
+            <p><strong>Email не настроен.</strong> Для отправки отчётов добавьте в переменные окружения:</p>
+            <p className="mt-1">• <code>SMTP_USER</code> — email отправителя (Gmail)</p>
+            <p>• <code>SMTP_PASSWORD</code> — App Password</p>
+            <p>• <code>REPORT_EMAIL_TO</code> — email получателя</p>
+          </div>
+        ) : (
+          <div>
+            <p className="text-sm text-gray-600 mb-4">Все таблицы филиала будут отправлены в формате CSV на настроенный email.</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <button 
+                onClick={() => handleSendEmail('day')} 
+                disabled={emailLoading}
+                className="px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
+              >
+                {emailLoading ? '...' : '📅 За сегодня'}
+              </button>
+              <button 
+                onClick={() => handleSendEmail('week')} 
+                disabled={emailLoading}
+                className="px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
+              >
+                {emailLoading ? '...' : '📆 За неделю'}
+              </button>
+              <button 
+                onClick={() => handleSendEmail('month')} 
+                disabled={emailLoading}
+                className="px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm font-medium"
+              >
+                {emailLoading ? '...' : '🗓 За месяц'}
+              </button>
+              <button 
+                onClick={() => handleSendEmail('all')} 
+                disabled={emailLoading}
+                className="px-4 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 text-sm font-medium"
+              >
+                {emailLoading ? '...' : '📊 За весь период'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="bg-white rounded-xl shadow-sm overflow-hidden">
         <div className="p-6">
@@ -1657,7 +1751,6 @@ const BranchSummaryPage = ({ branch, showToast }) => {
                         <td className="px-4 py-3 text-sm">{item['Цель на месяц']}</td>
                         <td className="px-4 py-3">
                           {(() => {
-                            // Исправляем процент - округляем до 1 знака
                             const percent = parseFloat(item['Выполнение %']) || 0;
                             const roundedPercent = Math.round(percent * 10) / 10;
                             
