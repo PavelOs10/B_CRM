@@ -1,4 +1,4 @@
-export const API_BASE_URL = 'http://166.1.201.124:8000';
+export const API_BASE_URL = 'http://176.32.37.98:8000';
 
 export const BRANCH_GOALS = {
   morning_events: 16,
