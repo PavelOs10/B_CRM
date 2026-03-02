@@ -41,8 +41,6 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_BOT_PASSWORD: ${TELEGRAM_BOT_PASSWORD:-admin123}
       BACKEND_URL: http://backend:8000
-      GOOGLE_SERVICE_ACCOUNT_JSON: ${GOOGLE_SERVICE_ACCOUNT_JSON}
-      GOOGLE_SHEET_ID: ${GOOGLE_SHEET_ID}
     depends_on:
       backend:
         condition: service_healthy

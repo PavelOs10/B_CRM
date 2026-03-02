@@ -3,8 +3,6 @@ import io
 import json
 import logging
 import httpx
-import gspread
-from google.oauth2.service_account import Credentials
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from datetime import datetime
@@ -28,59 +26,8 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 BOT_PASSWORD = os.getenv("TELEGRAM_BOT_PASSWORD", "admin")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
-    "https://www.googleapis.com/auth/drive.readonly",
-]
-
 # Авторизованные chat_id (хранятся в памяти, сбрасываются при рестарте)
 authorized_users: set[int] = set()
-
-# ─── Google Sheets клиент (для получения списка филиалов) ────────────────────
-
-_sheets_client = None
-
-def get_sheets_client():
-    global _sheets_client
-    if _sheets_client:
-        return _sheets_client
-    try:
-        sa_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "{}")
-        info = json.loads(sa_json)
-        if "private_key" in info:
-            info["private_key"] = info["private_key"].replace("\\n", "\n")
-        creds = Credentials.from_service_account_info(info, scopes=SCOPES)
-        _sheets_client = gspread.authorize(creds)
-        return _sheets_client
-    except Exception as e:
-        logger.error(f"Ошибка Google Sheets: {e}")
-        return None
-
-
-def get_branches_list() -> list[dict]:
-    """Получить список филиалов из главной таблицы."""
-    try:
-        client = get_sheets_client()
-        if not client:
-            return []
-        sheet_id = os.getenv("GOOGLE_SHEET_ID", "")
-        spreadsheet = client.open_by_key(sheet_id)
-        ws = spreadsheet.worksheet("Филиалы")
-        records = ws.get_all_records()
-        return [
-            {
-                "name": r.get("Название", ""),
-                "address": r.get("Адрес", ""),
-                "manager": r.get("Имя руководителя", ""),
-                "phone": r.get("Телефон", ""),
-            }
-            for r in records
-            if r.get("Название")
-        ]
-    except Exception as e:
-        logger.error(f"Ошибка получения филиалов: {e}")
-        return []
-
 
 # ─── HTTP-клиент к backend ───────────────────────────────────────────────────
 
@@ -106,6 +53,14 @@ async def api_post(path: str, data: dict = None) -> dict | None:
     except Exception as e:
         logger.error(f"API POST {path}: {e}")
         return None
+
+
+async def get_branches_list() -> list[dict]:
+    """Получить список филиалов через backend API."""
+    data = await api_get("/api/branches")
+    if data and data.get("success"):
+        return data.get("branches", [])
+    return []
 
 
 # ─── Вспомогательные функции ─────────────────────────────────────────────────
@@ -267,7 +222,7 @@ async def handle_overview(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     await query.edit_message_text("⏳ Загрузка данных по всем филиалам...")
 
-    branches = get_branches_list()
+    branches = await get_branches_list()
     if not branches:
         await query.edit_message_text(
             "❌ Не удалось получить список филиалов.",
@@ -325,7 +280,7 @@ async def handle_select_branch(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    branches = get_branches_list()
+    branches = await get_branches_list()
     if not branches:
         await query.edit_message_text(
             "❌ Не удалось загрузить список филиалов.",
@@ -614,7 +569,7 @@ async def handle_export_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    branches = get_branches_list()
+    branches = await get_branches_list()
     if not branches:
         await query.edit_message_text("❌ Нет филиалов.")
         return
@@ -781,7 +736,7 @@ async def handle_info(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     status = "✅ Работает" if health else "❌ Недоступен"
     version = health.get("version", "—") if health else "—"
 
-    branches = get_branches_list()
+    branches = await get_branches_list()
 
     text = (
         "ℹ️ *BarberCRM — Бот руководителя*\n\n"
