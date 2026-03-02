@@ -21,6 +21,7 @@ import io
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
