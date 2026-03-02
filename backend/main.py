@@ -585,38 +585,6 @@ def clear_branch_cache(branch_name: str):
     clear_cache_for_branch(branch_name)
     return {"success": True, "message": f"Кеш для '{branch_name}' очищен"}
 
-@app.get("/api/branches")
-def get_all_branches():
-    """Получить список всех филиалов (для бота руководителя)"""
-    cache_key = "all_branches"
-    cached = get_from_cache(cache_key)
-    if cached:
-        return cached
-
-    try:
-        client = get_sheets_client()
-        spreadsheet = client.open_by_key(MASTER_SPREADSHEET_ID)
-        worksheet = spreadsheet.worksheet("Филиалы")
-        records = worksheet.get_all_records()
-
-        branches = []
-        for r in records:
-            name = r.get('Название', '')
-            if name:
-                branches.append({
-                    "name": name,
-                    "address": r.get('Адрес', ''),
-                    "manager": r.get('Имя руководителя', ''),
-                    "phone": r.get('Телефон', ''),
-                })
-
-        result = {"success": True, "branches": branches}
-        set_cache(cache_key, result)
-        return result
-    except Exception as e:
-        logger.error(f"❌ Ошибка получения списка филиалов: {e}")
-        return {"success": False, "branches": [], "error": str(e)}
-
 @app.post("/register")
 def register_branch(branch: BranchRegister):
     """Регистрация нового филиала"""

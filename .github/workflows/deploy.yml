@@ -24,7 +24,7 @@ jobs:
             set +e
             
             echo "=========================================="
-            echo "BarberCRM Deployment v3.4 (+ Telegram Bot)"
+            echo "BarberCRM Deployment v3.3 (OAuth support)"
             echo "=========================================="
             
             cd /opt/barber-crm-app || mkdir -p /opt/barber-crm-app && cd /opt/barber-crm-app
@@ -63,7 +63,6 @@ jobs:
             
             stop_container "barber_backend"
             stop_container "barber_frontend"
-            stop_container "barber_telegram_bot"
             
             # Очистка сети
             echo ""
@@ -74,7 +73,6 @@ jobs:
             echo "=== И еще разок)) ==="
             stop_container "barber_backend"
             stop_container "barber_frontend"
-            stop_container "barber_telegram_bot"
             
             # Очистка сети
             echo ""
@@ -118,8 +116,6 @@ jobs:
             SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
             REPORT_EMAIL_TO=${{ secrets.REPORT_EMAIL_TO }}
             JWT_SECRET=${{ secrets.JWT_SECRET }}
-            TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
-            TELEGRAM_BOT_PASSWORD=${{ secrets.TELEGRAM_BOT_PASSWORD }}
             ENVEOF
             
             echo "  ✓ .env создан"
@@ -129,7 +125,7 @@ jobs:
             # ===================================================================
             echo ""
             echo "=== Очистка старых образов ==="
-            docker rmi barber-crm-app-backend barber-crm-app-frontend barber-crm-app-telegram-bot 2>/dev/null || true
+            docker rmi barber-crm-app-backend barber-crm-app-frontend 2>/dev/null || true
             
             echo ""
             echo "=== Сборка образов ==="
@@ -147,35 +143,27 @@ jobs:
             echo ""
             echo "=== Запуск контейнеров ==="
             
-            # Удаляем ВСЕ контейнеры barber (compose создал но не запустил — мешают)
-            docker rm -f barber_backend barber_frontend barber_telegram_bot 2>/dev/null || true
-            docker network rm barber_network 2>/dev/null || true
-            sleep 2
+            # Создаем сеть вручную
+            docker network create barber_network 2>/dev/null || true
             
-            # Запуск: сначала только backend (без зависимостей)
-            docker compose up -d --force-recreate backend
-            
-            # Ждём пока backend реально ответит на healthcheck
-            echo "  → Ожидание backend..."
-            for i in $(seq 1 30); do
-                if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
-                    echo "  ✓ Backend healthy (${i}s)"
-                    break
-                fi
-                sleep 2
-            done
-            
-            # Теперь запускаем frontend и бота
-            docker compose up -d --force-recreate frontend telegram-bot
+            # ИСПОЛЬЗУЕМ docker compose up --no-recreate
+            # Так как мы УЖЕ удалили старые контейнеры,
+            # Docker просто создаст новые БЕЗ попытки остановить старые!
+            docker compose up -d --no-recreate
             
             if [ $? -ne 0 ]; then
-                echo "  ✗ Ошибка compose up для frontend/bot!"
+                echo "  ✗ Ошибка запуска!"
                 
-                # Fallback: запускаем вручную
+                # Fallback: запускаем вручную через docker run с --env-file
                 echo "  → Пробуем запуск вручную..."
                 
-                # Удаляем то что compose мог оставить
-                docker rm -f barber_frontend barber_telegram_bot 2>/dev/null || true
+                docker run -d \
+                  --name barber_backend \
+                  --network barber_network \
+                  --restart unless-stopped \
+                  -p 8000:8000 \
+                  --env-file .env \
+                  barber-crm-app-backend
                 
                 docker run -d \
                   --name barber_frontend \
@@ -183,14 +171,6 @@ jobs:
                   --restart unless-stopped \
                   -p 80:80 \
                   barber-crm-app-frontend
-                
-                docker run -d \
-                  --name barber_telegram_bot \
-                  --network barber_network \
-                  --restart unless-stopped \
-                  --env-file .env \
-                  -e BACKEND_URL=http://barber_backend:8000 \
-                  barber-crm-app-telegram-bot
             fi
             
             echo "  ✓ Запущено"
@@ -217,10 +197,6 @@ jobs:
             docker logs barber_frontend --tail=10 2>&1
             
             echo ""
-            echo "=== Telegram Bot логи ==="
-            docker logs barber_telegram_bot --tail=10 2>&1
-            
-            echo ""
             echo "=== Health Check ==="
             sleep 3
             
@@ -234,12 +210,6 @@ jobs:
                 echo "✓ Frontend OK"
             else
                 echo "⚠ Frontend не отвечает"
-            fi
-            
-            if docker ps --format '{{.Names}}' | grep -q "barber_telegram_bot"; then
-                echo "✓ Telegram Bot OK (running)"
-            else
-                echo "⚠ Telegram Bot не запущен"
             fi
             
             # Очистка
