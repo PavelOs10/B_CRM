@@ -147,19 +147,20 @@ jobs:
             echo ""
             echo "=== Запуск контейнеров ==="
             
-            # Создаем сеть вручную
-            docker network create barber_network 2>/dev/null || true
+            # НЕ создаём сеть вручную — пусть compose сам управляет ей
+            # Удаляем старую сеть если осталась (compose создаст свою)
+            docker network rm barber_network 2>/dev/null || true
             
-            # ИСПОЛЬЗУЕМ docker compose up --no-recreate
-            # Так как мы УЖЕ удалили старые контейнеры,
-            # Docker просто создаст новые БЕЗ попытки остановить старые!
-            docker compose up -d --no-recreate
+            # Пробуем compose up (создаст сеть и все контейнеры)
+            docker compose up -d --force-recreate
             
             if [ $? -ne 0 ]; then
-                echo "  ✗ Ошибка запуска!"
+                echo "  ✗ Ошибка compose up!"
                 
-                # Fallback: запускаем вручную через docker run с --env-file
+                # Fallback: запускаем вручную через docker run
                 echo "  → Пробуем запуск вручную..."
+                
+                docker network create barber_network 2>/dev/null || true
                 
                 docker run -d \
                   --name barber_backend \
@@ -175,6 +176,18 @@ jobs:
                   --restart unless-stopped \
                   -p 80:80 \
                   barber-crm-app-frontend
+                
+                # Ждём пока backend поднимется перед запуском бота
+                echo "  → Ожидание backend (10 сек)..."
+                sleep 10
+                
+                docker run -d \
+                  --name barber_telegram_bot \
+                  --network barber_network \
+                  --restart unless-stopped \
+                  --env-file .env \
+                  -e BACKEND_URL=http://barber_backend:8000 \
+                  barber-crm-app-telegram-bot
             fi
             
             echo "  ✓ Запущено"

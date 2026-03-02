@@ -1,8 +1,3 @@
-"""
-BarberCRM Telegram Bot — информационный бот для руководителя сети.
-Просмотр данных по филиалам, выгрузка Excel-отчётов.
-"""
-
 import os
 import io
 import json
