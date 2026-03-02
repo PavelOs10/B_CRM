@@ -678,7 +678,6 @@ def get_dashboard_summary(branch_name: str):
     """
     ОПТИМИЗИРОВАННАЯ ВЕРСИЯ: загружает ВСЕ данные ОДНИМ batch-запросом
     Вместо 7+ отдельных запросов к API
-    
     """
     try:
         client = get_sheets_client()
