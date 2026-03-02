@@ -1,7 +1,7 @@
 const { useState, useEffect, useRef } = React;
 
 // ==================== CONFIG ====================
-const API_BASE_URL = 'http://166.1.201.124:8000';
+const API_BASE_URL = 'http://176.32.37.98:8000';
 
 const BRANCH_GOALS = {
   morning_events: 16,
