@@ -17,8 +17,9 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
-import csv
 import io
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1408,23 +1409,74 @@ def filter_records_by_period(records: List[Dict], start: datetime, end: datetime
                 continue
     return filtered
 
-def build_csv_from_records(records: List[Dict], sheet_name: str) -> str:
-    """Создаёт CSV-строку из списка записей"""
+def build_xlsx_from_records(records: List[Dict], sheet_name: str) -> bytes:
+    """Создаёт Excel-файл (bytes) из списка записей с форматированием"""
     if not records:
-        return ""
+        return b""
     
-    output = io.StringIO()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_name[:31]  # Excel ограничивает длину имени листа 31 символом
+    
     headers = list(records[0].keys())
-    writer = csv.DictWriter(output, fieldnames=headers)
-    writer.writeheader()
-    for record in records:
-        writer.writerow(record)
+    
+    # Стили для заголовков
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="2E86AB", end_color="2E86AB", fill_type="solid")
+    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    thin_border = Border(
+        left=Side(style="thin"),
+        right=Side(style="thin"),
+        top=Side(style="thin"),
+        bottom=Side(style="thin")
+    )
+    
+    # Записываем заголовки
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
+    
+    # Записываем данные
+    data_alignment = Alignment(vertical="center", wrap_text=True)
+    for row_idx, record in enumerate(records, 2):
+        for col_idx, header in enumerate(headers, 1):
+            value = record.get(header, "")
+            # Пробуем конвертировать числовые строки
+            if isinstance(value, str):
+                try:
+                    if '.' in value:
+                        value = float(value)
+                    else:
+                        value = int(value)
+                except (ValueError, TypeError):
+                    pass
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell.alignment = data_alignment
+            cell.border = thin_border
+    
+    # Автоширина колонок
+    for col_idx, header in enumerate(headers, 1):
+        max_length = len(str(header))
+        for row_idx in range(2, len(records) + 2):
+            cell_value = ws.cell(row=row_idx, column=col_idx).value
+            if cell_value:
+                max_length = max(max_length, len(str(cell_value)))
+        ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = min(max_length + 3, 50)
+    
+    # Закрепляем первую строку (заголовки)
+    ws.freeze_panes = "A2"
+    
+    output = io.BytesIO()
+    wb.save(output)
     return output.getvalue()
 
 def send_email_with_attachments(to_email: str, subject: str, body_html: str, attachments: List[Dict]):
     """
     Отправляет email с вложениями через SMTP.
-    attachments: [{"filename": "...", "content": "csv_string"}]
+    attachments: [{"filename": "...", "content": bytes}]  # Excel файлы в байтах
     """
     if not SMTP_USER or not SMTP_PASSWORD:
         raise HTTPException(status_code=500, detail="SMTP не настроен. Укажите SMTP_USER и SMTP_PASSWORD в переменных окружения.")
@@ -1441,8 +1493,8 @@ def send_email_with_attachments(to_email: str, subject: str, body_html: str, att
     
     for att in attachments:
         if att["content"]:
-            part = MIMEBase('text', 'csv')
-            part.set_payload(att["content"].encode('utf-8-sig'))  # utf-8-sig для корректного отображения в Excel
+            part = MIMEBase('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            part.set_payload(att["content"])
             encoders.encode_base64(part)
             part.add_header('Content-Disposition', f'attachment; filename="{att["filename"]}"')
             msg.attach(part)
@@ -1485,7 +1537,7 @@ def send_report_email(branch_name: str, request: EmailReportRequest):
         clear_cache_for_branch(branch_name)
         all_data = get_all_sheet_data_batch(client, spreadsheet_id, sheet_names)
         
-        # Фильтруем и формируем CSV вложения
+        # Фильтруем и формируем Excel вложения
         attachments = []
         total_records = 0
         
@@ -1495,11 +1547,11 @@ def send_report_email(branch_name: str, request: EmailReportRequest):
                 records = filter_records_by_period(records, start, end)
             
             if records:
-                csv_content = build_csv_from_records(records, sheet_name)
+                xlsx_content = build_xlsx_from_records(records, sheet_name)
                 safe_name = sheet_name.replace(" ", "_").replace("/", "_")
                 attachments.append({
-                    "filename": f"{safe_name}.csv",
-                    "content": csv_content
+                    "filename": f"{safe_name}.xlsx",
+                    "content": xlsx_content
                 })
                 total_records += len(records)
         
@@ -1516,7 +1568,7 @@ def send_report_email(branch_name: str, request: EmailReportRequest):
             <p><strong>Период:</strong> {period_label}</p>
             <p><strong>Дата формирования:</strong> {datetime.now().strftime('%d.%m.%Y %H:%M')}</p>
             <hr>
-            <p>Во вложении {len(attachments)} таблиц ({total_records} записей):</p>
+            <p>Во вложении {len(attachments)} таблиц Excel ({total_records} записей):</p>
             <ul>
                 {''.join(f"<li>{att['filename']}</li>" for att in attachments)}
             </ul>

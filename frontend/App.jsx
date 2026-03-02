@@ -1669,7 +1669,7 @@ const BranchSummaryPage = ({ branch, showToast }) => {
           </div>
         ) : (
           <div>
-            <p className="text-sm text-gray-600 mb-4">Все таблицы филиала будут отправлены в формате CSV на настроенный email.</p>
+            <p className="text-sm text-gray-600 mb-4">Все таблицы филиала будут отправлены в формате Excel на настроенный email.</p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <button 
                 onClick={() => handleSendEmail('day')} 
