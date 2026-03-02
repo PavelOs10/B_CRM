@@ -135,9 +135,9 @@ def get_sheets_client():
                     scopes=SCOPES
                 )
                 
-                if creds.expired and creds.refresh_token:
+                if creds.refresh_token:
                     from google.auth.transport.requests import Request
-                    logger.info("🔄 Обновляем истёкший OAuth токен...")
+                    logger.info("🔄 Принудительно обновляем OAuth токен...")
                     creds.refresh(Request())
                     logger.info("✅ Токен обновлён")
                 
