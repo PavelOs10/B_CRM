@@ -661,8 +661,10 @@ def login(request: LoginRequest):
         return {
             "success": True,
             "token": branch.get('Токен'),
-            "branch_name": request.name,
-            "manager_name": branch.get('Имя руководителя')
+            "branch": {
+                "name": request.name,
+                "manager": branch.get('Имя руководителя')
+            }
         }
         
     except HTTPException:
