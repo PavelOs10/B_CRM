@@ -33,6 +33,20 @@ services:
       backend:
         condition: service_healthy
 
+  telegram-bot:
+    build: ./telegram-bot
+    container_name: barber_telegram_bot
+    restart: unless-stopped
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_BOT_PASSWORD: ${TELEGRAM_BOT_PASSWORD:-admin123}
+      BACKEND_URL: http://backend:8000
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${GOOGLE_SERVICE_ACCOUNT_JSON}
+      GOOGLE_SHEET_ID: ${GOOGLE_SHEET_ID}
+    depends_on:
+      backend:
+        condition: service_healthy
+
 networks:
   default:
     name: barber_network

@@ -24,7 +24,7 @@ jobs:
             set +e
             
             echo "=========================================="
-            echo "BarberCRM Deployment v3.3 (OAuth support)"
+            echo "BarberCRM Deployment v3.4 (+ Telegram Bot)"
             echo "=========================================="
             
             cd /opt/barber-crm-app || mkdir -p /opt/barber-crm-app && cd /opt/barber-crm-app
@@ -63,6 +63,7 @@ jobs:
             
             stop_container "barber_backend"
             stop_container "barber_frontend"
+            stop_container "barber_telegram_bot"
             
             # Очистка сети
             echo ""
@@ -73,6 +74,7 @@ jobs:
             echo "=== И еще разок)) ==="
             stop_container "barber_backend"
             stop_container "barber_frontend"
+            stop_container "barber_telegram_bot"
             
             # Очистка сети
             echo ""
@@ -116,6 +118,8 @@ jobs:
             SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
             REPORT_EMAIL_TO=${{ secrets.REPORT_EMAIL_TO }}
             JWT_SECRET=${{ secrets.JWT_SECRET }}
+            TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+            TELEGRAM_BOT_PASSWORD=${{ secrets.TELEGRAM_BOT_PASSWORD }}
             ENVEOF
             
             echo "  ✓ .env создан"
@@ -125,7 +129,7 @@ jobs:
             # ===================================================================
             echo ""
             echo "=== Очистка старых образов ==="
-            docker rmi barber-crm-app-backend barber-crm-app-frontend 2>/dev/null || true
+            docker rmi barber-crm-app-backend barber-crm-app-frontend barber-crm-app-telegram-bot 2>/dev/null || true
             
             echo ""
             echo "=== Сборка образов ==="
@@ -197,6 +201,10 @@ jobs:
             docker logs barber_frontend --tail=10 2>&1
             
             echo ""
+            echo "=== Telegram Bot логи ==="
+            docker logs barber_telegram_bot --tail=10 2>&1
+            
+            echo ""
             echo "=== Health Check ==="
             sleep 3
             
@@ -210,6 +218,12 @@ jobs:
                 echo "✓ Frontend OK"
             else
                 echo "⚠ Frontend не отвечает"
+            fi
+            
+            if docker ps --format '{{.Names}}' | grep -q "barber_telegram_bot"; then
+                echo "✓ Telegram Bot OK (running)"
+            else
+                echo "⚠ Telegram Bot не запущен"
             fi
             
             # Очистка
