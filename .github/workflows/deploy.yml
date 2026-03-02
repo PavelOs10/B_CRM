@@ -147,28 +147,35 @@ jobs:
             echo ""
             echo "=== Запуск контейнеров ==="
             
-            # НЕ создаём сеть вручную — пусть compose сам управляет ей
-            # Удаляем старую сеть если осталась (compose создаст свою)
+            # Удаляем ВСЕ контейнеры barber (compose создал но не запустил — мешают)
+            docker rm -f barber_backend barber_frontend barber_telegram_bot 2>/dev/null || true
             docker network rm barber_network 2>/dev/null || true
+            sleep 2
             
-            # Пробуем compose up (создаст сеть и все контейнеры)
-            docker compose up -d --force-recreate
+            # Запуск: сначала только backend (без зависимостей)
+            docker compose up -d --force-recreate backend
+            
+            # Ждём пока backend реально ответит на healthcheck
+            echo "  → Ожидание backend..."
+            for i in $(seq 1 30); do
+                if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+                    echo "  ✓ Backend healthy (${i}s)"
+                    break
+                fi
+                sleep 2
+            done
+            
+            # Теперь запускаем frontend и бота
+            docker compose up -d --force-recreate frontend telegram-bot
             
             if [ $? -ne 0 ]; then
-                echo "  ✗ Ошибка compose up!"
+                echo "  ✗ Ошибка compose up для frontend/bot!"
                 
-                # Fallback: запускаем вручную через docker run
+                # Fallback: запускаем вручную
                 echo "  → Пробуем запуск вручную..."
                 
-                docker network create barber_network 2>/dev/null || true
-                
-                docker run -d \
-                  --name barber_backend \
-                  --network barber_network \
-                  --restart unless-stopped \
-                  -p 8000:8000 \
-                  --env-file .env \
-                  barber-crm-app-backend
+                # Удаляем то что compose мог оставить
+                docker rm -f barber_frontend barber_telegram_bot 2>/dev/null || true
                 
                 docker run -d \
                   --name barber_frontend \
@@ -176,10 +183,6 @@ jobs:
                   --restart unless-stopped \
                   -p 80:80 \
                   barber-crm-app-frontend
-                
-                # Ждём пока backend поднимется перед запуском бота
-                echo "  → Ожидание backend (10 сек)..."
-                sleep 10
                 
                 docker run -d \
                   --name barber_telegram_bot \
