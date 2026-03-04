@@ -491,25 +491,26 @@ def count_records_for_month_from_data(records: List[Dict], month: str) -> int:
     for record in records:
         record_date = record.get('Дата отправки', '') or record.get('Дата', '')
         if record_date:
-            try:
-                date_obj = datetime.strptime(record_date.split()[0], "%Y-%m-%d")
-                record_month = date_obj.strftime("%B %Y")
-                
-                months_ru = {
-                    'January': 'Январь', 'February': 'Февраль', 'March': 'Март',
-                    'April': 'Апрель', 'May': 'Май', 'June': 'Июнь',
-                    'July': 'Июль', 'August': 'Август', 'September': 'Сентябрь',
-                    'October': 'Октябрь', 'November': 'Ноябрь', 'December': 'Декабрь'
-                }
-                
-                month_en = record_month.split()[0]
-                year = record_month.split()[1]
-                record_month_ru = f"{months_ru.get(month_en, month_en)} {year}"
-                
-                if record_month_ru == month:
-                    count += 1
-            except:
-                continue
+            date_obj = parse_date_flexible(str(record_date))
+            if date_obj:
+                try:
+                    record_month = date_obj.strftime("%B %Y")
+                    
+                    months_ru = {
+                        'January': 'Январь', 'February': 'Февраль', 'March': 'Март',
+                        'April': 'Апрель', 'May': 'Май', 'June': 'Июнь',
+                        'July': 'Июль', 'August': 'Август', 'September': 'Сентябрь',
+                        'October': 'Октябрь', 'November': 'Ноябрь', 'December': 'Декабрь'
+                    }
+                    
+                    month_en = record_month.split()[0]
+                    year = record_month.split()[1]
+                    record_month_ru = f"{months_ru.get(month_en, month_en)} {year}"
+                    
+                    if record_month_ru == month:
+                        count += 1
+                except:
+                    continue
     
     return count
 
@@ -519,30 +520,31 @@ def sum_reviews_for_month_from_data(records: List[Dict], month: str) -> int:
     for record in records:
         record_date = record.get('Дата отправки', '')
         if record_date:
-            try:
-                date_obj = datetime.strptime(record_date.split()[0], "%Y-%m-%d")
-                record_month = date_obj.strftime("%B %Y")
-                
-                months_ru = {
-                    'January': 'Январь', 'February': 'Февраль', 'March': 'Март',
-                    'April': 'Апрель', 'May': 'Май', 'June': 'Июнь',
-                    'July': 'Июль', 'August': 'Август', 'September': 'Сентябрь',
-                    'October': 'Октябрь', 'November': 'Ноябрь', 'December': 'Декабрь'
-                }
-                
-                month_en = record_month.split()[0]
-                year = record_month.split()[1]
-                record_month_ru = f"{months_ru.get(month_en, month_en)} {year}"
-                
-                if record_month_ru == month:
-                    # Суммируем факт отзывов
-                    fact = record.get('Факт', 0) or record.get('Факт отзывов', 0)
-                    try:
-                        total += int(fact)
-                    except:
-                        continue
-            except:
-                continue
+            date_obj = parse_date_flexible(str(record_date))
+            if date_obj:
+                try:
+                    record_month = date_obj.strftime("%B %Y")
+                    
+                    months_ru = {
+                        'January': 'Январь', 'February': 'Февраль', 'March': 'Март',
+                        'April': 'Апрель', 'May': 'Май', 'June': 'Июнь',
+                        'July': 'Июль', 'August': 'Август', 'September': 'Сентябрь',
+                        'October': 'Октябрь', 'November': 'Ноябрь', 'December': 'Декабрь'
+                    }
+                    
+                    month_en = record_month.split()[0]
+                    year = record_month.split()[1]
+                    record_month_ru = f"{months_ru.get(month_en, month_en)} {year}"
+                    
+                    if record_month_ru == month:
+                        # Суммируем факт отзывов
+                        fact = record.get('Факт', 0) or record.get('Факт отзывов', 0)
+                        try:
+                            total += int(fact)
+                        except:
+                            continue
+                except:
+                    continue
     
     return total
 
@@ -1370,23 +1372,23 @@ def get_period_filter_dates(period_type: str, custom_date: Optional[str] = None)
             target = datetime.strptime(custom_date, "%Y-%m-%d")
         else:
             target = now
-        start = target.replace(hour=0, minute=0, second=0)
-        end = target.replace(hour=23, minute=59, second=59)
+        start = target.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = target.replace(hour=23, minute=59, second=59, microsecond=0)
         label = target.strftime("%d.%m.%Y")
     elif period_type == "week":
         # Текущая неделя (понедельник - воскресенье)
         weekday = now.weekday()  # 0=пн
-        start = (now - timedelta(days=weekday)).replace(hour=0, minute=0, second=0)
-        end = (start + timedelta(days=6)).replace(hour=23, minute=59, second=59)
+        start = (now - timedelta(days=weekday)).replace(hour=0, minute=0, second=0, microsecond=0)
+        end = (start + timedelta(days=6)).replace(hour=23, minute=59, second=59, microsecond=0)
         label = f"{start.strftime('%d.%m.%Y')} - {end.strftime('%d.%m.%Y')}"
     elif period_type == "month":
         # Текущий месяц
-        start = now.replace(day=1, hour=0, minute=0, second=0)
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         # Последний день месяца
         if now.month == 12:
-            end = now.replace(year=now.year + 1, month=1, day=1) - timedelta(seconds=1)
+            end = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(seconds=1)
         else:
-            end = now.replace(month=now.month + 1, day=1) - timedelta(seconds=1)
+            end = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(seconds=1)
         months_ru = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
                      'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь']
         label = f"{months_ru[now.month - 1]} {now.year}"
@@ -1397,28 +1399,52 @@ def get_period_filter_dates(period_type: str, custom_date: Optional[str] = None)
     
     return start, end, label
 
+def parse_date_flexible(date_str: str) -> Optional[datetime]:
+    """Парсит дату в различных форматах, возвращает datetime или None"""
+    date_str = str(date_str).strip()
+    if not date_str:
+        return None
+    
+    # Берём только часть с датой (без времени)
+    date_part = date_str.split()[0]
+    
+    # Пробуем разные форматы
+    formats = [
+        "%Y-%m-%d",      # 2025-03-04
+        "%d.%m.%Y",      # 04.03.2025
+        "%d/%m/%Y",      # 04/03/2025
+        "%m/%d/%Y",      # 03/04/2025 (US format from Google Sheets)
+    ]
+    
+    for fmt in formats:
+        try:
+            return datetime.strptime(date_part, fmt)
+        except ValueError:
+            continue
+    
+    return None
+
 def filter_records_by_period(records: List[Dict], start: datetime, end: datetime) -> List[Dict]:
     """Фильтрует записи по периоду"""
     filtered = []
+    # Сравниваем только даты (без времени) для надёжности
+    start_date = start.date()
+    end_date = end.date()
+    
     for record in records:
-        record_date_str = record.get('Дата отправки', '') or record.get('Дата', '')
+        record_date_str = record.get('Дата отправки', '') or record.get('Дата', '') or record.get('Дата начала', '')
         if record_date_str:
-            try:
-                record_date = datetime.strptime(record_date_str.split()[0], "%Y-%m-%d")
-                if start <= record_date <= end:
-                    filtered.append(record)
-            except:
-                continue
+            parsed = parse_date_flexible(str(record_date_str))
+            if parsed and start_date <= parsed.date() <= end_date:
+                filtered.append(record)
     return filtered
 
-def build_xlsx_from_records(records: List[Dict], sheet_name: str) -> bytes:
-    """Создаёт Excel-файл (bytes) из списка записей с форматированием"""
+def add_sheet_to_workbook(wb: Workbook, records: List[Dict], sheet_name: str):
+    """Добавляет лист с данными в существующий Workbook"""
     if not records:
-        return b""
+        return
     
-    wb = Workbook()
-    ws = wb.active
-    ws.title = sheet_name[:31]  # Excel ограничивает длину имени листа 31 символом
+    ws = wb.create_sheet(title=sheet_name[:31])  # Excel ограничивает длину имени листа 31 символом
     
     headers = list(records[0].keys())
     
@@ -1470,6 +1496,19 @@ def build_xlsx_from_records(records: List[Dict], sheet_name: str) -> bytes:
     
     # Закрепляем первую строку (заголовки)
     ws.freeze_panes = "A2"
+
+def build_multi_sheet_xlsx(sheets_data: Dict[str, List[Dict]]) -> bytes:
+    """Создаёт один Excel-файл с несколькими вкладками (листами)"""
+    wb = Workbook()
+    # Удаляем дефолтный пустой лист
+    wb.remove(wb.active)
+    
+    for sheet_name, records in sheets_data.items():
+        if records:
+            add_sheet_to_workbook(wb, records, sheet_name)
+    
+    if not wb.sheetnames:
+        return b""
     
     output = io.BytesIO()
     wb.save(output)
@@ -1539,9 +1578,10 @@ def send_report_email(branch_name: str, request: EmailReportRequest):
         clear_cache_for_branch(branch_name)
         all_data = get_all_sheet_data_batch(client, spreadsheet_id, sheet_names)
         
-        # Фильтруем и формируем Excel вложения
-        attachments = []
+        # Фильтруем и собираем данные для вкладок Excel
+        sheets_data = {}
         total_records = 0
+        included_sheets = []
         
         for sheet_name in sheet_names:
             records = all_data.get(sheet_name, [])
@@ -1549,16 +1589,24 @@ def send_report_email(branch_name: str, request: EmailReportRequest):
                 records = filter_records_by_period(records, start, end)
             
             if records:
-                xlsx_content = build_xlsx_from_records(records, sheet_name)
-                safe_name = sheet_name.replace(" ", "_").replace("/", "_")
-                attachments.append({
-                    "filename": f"{safe_name}.xlsx",
-                    "content": xlsx_content
-                })
+                sheets_data[sheet_name] = records
                 total_records += len(records)
+                included_sheets.append(f"{sheet_name} ({len(records)} зап.)")
         
         if total_records == 0:
             return {"success": False, "message": f"Нет данных за период: {period_label}"}
+        
+        # Создаём один Excel-файл со всеми вкладками
+        xlsx_content = build_multi_sheet_xlsx(sheets_data)
+        
+        safe_branch = branch_name.replace(" ", "_").replace("/", "_")
+        safe_period = period_label.replace(" ", "_").replace("/", "_").replace(".", "_")
+        filename = f"Отчёт_{safe_branch}_{safe_period}.xlsx"
+        
+        attachments = [{
+            "filename": filename,
+            "content": xlsx_content
+        }]
         
         # Формируем тему и тело письма
         subject = f"Отчёт {branch_name} — {period_label}"
@@ -1570,9 +1618,9 @@ def send_report_email(branch_name: str, request: EmailReportRequest):
             <p><strong>Период:</strong> {period_label}</p>
             <p><strong>Дата формирования:</strong> {datetime.now().strftime('%d.%m.%Y %H:%M')}</p>
             <hr>
-            <p>Во вложении {len(attachments)} таблиц Excel ({total_records} записей):</p>
+            <p>Во вложении Excel-файл с {len(sheets_data)} вкладками ({total_records} записей):</p>
             <ul>
-                {''.join(f"<li>{att['filename']}</li>" for att in attachments)}
+                {''.join(f"<li>{name}</li>" for name in included_sheets)}
             </ul>
             <hr>
             <p style="color: #888; font-size: 12px;">Отчёт сформирован автоматически системой BarberCRM</p>
@@ -1586,7 +1634,7 @@ def send_report_email(branch_name: str, request: EmailReportRequest):
             "success": True, 
             "message": f"Отчёт отправлен на {REPORT_EMAIL_TO}",
             "period": period_label,
-            "sheets_count": len(attachments),
+            "sheets_count": len(sheets_data),
             "total_records": total_records
         }
         
