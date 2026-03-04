@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-BarberCRM Telegram Bot — бот для руководителя (только просмотр)
-Работает через существующий Backend API по внутренней сети Docker.
-Используются ReplyKeyboardMarkup (кнопки вместо клавиатуры).
+BarberCRM Telegram Bot — бот для руководителя (только просмотр).
+Работает ТОЛЬКО через Backend API по внутренней сети Docker.
+Кнопки — ReplyKeyboardMarkup (вместо клавиатуры телефона).
 Вход по паролю (BOT_ACCESS_PASSWORD).
 """
 
 import os
 import logging
 import httpx
-from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -27,10 +26,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("barber_bot")
 
-# Множество авторизованных user_id (хранится в памяти, сбрасывается при рестарте)
+# Авторизованные user_id (в памяти, сбрасывается при рестарте контейнера)
 authorized_users: set[int] = set()
 
-# ─── Состояния ConversationHandler ────────────────────────────
+# ─── Состояния ────────────────────────────────────────────────
 (
     AUTH_PASSWORD,
     MAIN_MENU,
@@ -38,14 +37,13 @@ authorized_users: set[int] = set()
     BRANCH_MENU,
 ) = range(4)
 
-# ─── Клавиатуры (ReplyKeyboard — вместо стандартной клавиатуры) ─
+# ─── Клавиатуры ───────────────────────────────────────────────
 KB_MAIN = ReplyKeyboardMarkup(
     [
         ["📊 Выбрать филиал"],
         ["ℹ️ Помощь", "🚪 Выйти"],
     ],
     resize_keyboard=True,
-    one_time_keyboard=False,
 )
 
 KB_BRANCH_MENU = ReplyKeyboardMarkup(
@@ -58,7 +56,6 @@ KB_BRANCH_MENU = ReplyKeyboardMarkup(
         ["🔙 Назад к списку филиалов"],
     ],
     resize_keyboard=True,
-    one_time_keyboard=False,
 )
 
 SECTION_MAP = {
@@ -73,207 +70,157 @@ SECTION_MAP = {
 }
 
 
-# ─── Вспомогательные функции API ──────────────────────────────
+# ─── HTTP-клиент к Backend API ────────────────────────────────
 async def api_get(path: str) -> dict | None:
-    """GET-запрос к backend."""
+    """GET-запрос к backend. Возвращает JSON или None."""
     url = f"{BACKEND_URL}/{path}"
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            return resp.json()
+            r = await client.get(url)
+            logger.info(f"GET {url} → {r.status_code}")
+            r.raise_for_status()
+            return r.json()
+    except httpx.HTTPStatusError as e:
+        logger.error(f"API {url}: HTTP {e.response.status_code} — {e.response.text[:200]}")
     except Exception as e:
-        logger.error(f"API error GET {url}: {e}")
-        return None
+        logger.error(f"API {url}: {type(e).__name__}: {e}")
+    return None
 
 
 async def fetch_branches() -> list[str]:
-    """Получает список названий филиалов из главной Google-таблицы."""
-    try:
-        import gspread
-        from google.oauth2.service_account import Credentials
-        import json
-
-        sa_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "{}")
-        info = json.loads(sa_json)
-        if "private_key" in info:
-            info["private_key"] = info["private_key"].replace("\\n", "\n")
-
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets.readonly",
-            "https://www.googleapis.com/auth/drive.readonly",
-        ]
-        creds = Credentials.from_service_account_info(info, scopes=scopes)
-        gc = gspread.authorize(creds)
-
-        sheet_id = os.getenv("GOOGLE_SHEET_ID", "")
-        spreadsheet = gc.open_by_key(sheet_id)
-        ws = spreadsheet.worksheet("Филиалы")
-        records = ws.get_all_records()
-        return [r["Название"] for r in records if r.get("Название")]
-    except Exception as e:
-        logger.error(f"Ошибка получения списка филиалов: {e}")
-        return []
+    """Получает список филиалов через Backend API."""
+    data = await api_get("branches")
+    if data and data.get("success"):
+        return data.get("branches", [])
+    logger.error(f"fetch_branches failed: {data}")
+    return []
 
 
-# ─── Форматирование данных ────────────────────────────────────
+# ─── Форматирование ───────────────────────────────────────────
+def _esc(text: str) -> str:
+    """Экранирование для MarkdownV2."""
+    for ch in r"_*[]()~`>#+-=|{}.!":
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
+
+def _bar(pct: float, n: int = 10) -> str:
+    f = int(min(pct, 100) / 100 * n)
+    return "▓" * f + "░" * (n - f)
+
+
 def format_dashboard(data: dict, branch: str) -> str:
-    """Форматирует дашборд филиала."""
     summary = data.get("summary", {})
     lines = [f"📊  *Дашборд: {_esc(branch)}*\n"]
 
-    order = [
-        ("morning_events", "🌅"),
-        ("field_visits", "🚶"),
-        ("one_on_one", "🤝"),
-        ("master_plans", "📋"),
-        ("weekly_reports", "📊"),
-        ("reviews", "⭐"),
+    for key, emoji in [
+        ("morning_events", "🌅"), ("field_visits", "🚶"),
+        ("one_on_one", "🤝"), ("master_plans", "📋"),
+        ("weekly_reports", "📊"), ("reviews", "⭐"),
         ("new_employees", "👶"),
-    ]
-
-    for key, emoji in order:
-        item = summary.get(key, {})
-        label = item.get("label", key)
-        cur = item.get("current", 0)
-        goal = item.get("goal", 0)
-        pct = item.get("percentage", 0)
-        bar = _progress_bar(pct)
+    ]:
+        it = summary.get(key, {})
+        label = it.get("label", key)
+        cur, goal, pct = it.get("current", 0), it.get("goal", 0), it.get("percentage", 0)
         lines.append(f"{emoji} *{_esc(label)}*")
-        lines.append(f"    {cur}/{goal}  \\({_esc(str(pct))}%\\)  {bar}\n")
+        lines.append(f"    {cur}/{goal}  \\({_esc(str(pct))}%\\)  {_bar(pct)}\n")
 
     return "\n".join(lines)
 
 
-def _progress_bar(pct: float, length: int = 10) -> str:
-    filled = int(min(pct, 100) / 100 * length)
-    return "▓" * filled + "░" * (length - filled)
-
-
-def _esc(text: str) -> str:
-    """Экранирование спецсимволов для MarkdownV2."""
-    special = r"_*[]()~`>#+-=|{}.!"
-    out = []
-    for ch in str(text):
-        if ch in special:
-            out.append(f"\\{ch}")
-        else:
-            out.append(ch)
-    return "".join(out)
-
-
-def format_records(records: list[dict], section_name: str, branch: str) -> str:
-    """Форматирует записи раздела для Telegram."""
+def format_records(records: list[dict], section: str, branch: str) -> str:
     if not records:
-        return f"📭 В разделе «{_esc(section_name)}» для филиала «{_esc(branch)}» пока нет записей\\."
+        return f"📭 В разделе «{_esc(section)}» филиала «{_esc(branch)}» пока нет записей\\."
 
     total = len(records)
     show = records[:10]
-
-    lines = [f"📋 *{_esc(section_name)}* — {_esc(branch)}"]
-    lines.append(f"Всего записей: {total}  \\(показаны последние {len(show)}\\)\n")
+    lines = [
+        f"📋 *{_esc(section)}* — {_esc(branch)}",
+        f"Всего записей: {total}  \\(последние {len(show)}\\)\n",
+    ]
 
     for i, rec in enumerate(show, 1):
-        lines.append(f"─── Запись {i} ───")
+        lines.append(f"─── {i} ───")
         for k, v in rec.items():
-            if v == "" or v is None:
+            if v in ("", None):
                 continue
             lines.append(f"*{_esc(str(k))}:* {_esc(str(v))}")
         lines.append("")
 
     if total > 10:
-        lines.append(f"_\\.\\.\\.и ещё {total - 10} записей_")
-
+        lines.append(f"_\\.\\.\\.и ещё {total - 10}_")
     return "\n".join(lines)
 
 
-def _split_message(text: str, max_len: int = 4000) -> list[str]:
-    """Разбивает длинное сообщение на части."""
-    if len(text) <= max_len:
+def _split(text: str, limit: int = 4000) -> list[str]:
+    if len(text) <= limit:
         return [text]
-    parts = []
+    parts: list[str] = []
     while text:
-        if len(text) <= max_len:
+        if len(text) <= limit:
             parts.append(text)
             break
-        idx = text.rfind("\n", 0, max_len)
+        idx = text.rfind("\n", 0, limit)
         if idx == -1:
-            idx = max_len
+            idx = limit
         parts.append(text[:idx])
         text = text[idx:].lstrip("\n")
     return parts
 
 
+async def _send(update: Update, text: str, kb=None, md: bool = True):
+    """Отправка с разбивкой длинных сообщений."""
+    for chunk in _split(text):
+        await update.message.reply_text(
+            chunk,
+            parse_mode="MarkdownV2" if md else None,
+            reply_markup=kb,
+        )
+
+
 # ─── Хэндлеры ────────────────────────────────────────────────
 
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Точка входа — проверяем авторизацию или просим пароль."""
+async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
-    context.user_data.clear()
+    ctx.user_data.clear()
 
-    # Если пароль не задан в env — пускаем всех
     if not BOT_ACCESS_PASSWORD:
         authorized_users.add(user.id)
-        logger.warning("BOT_ACCESS_PASSWORD не задан — доступ без пароля!")
 
     if user.id in authorized_users:
-        await update.message.reply_text(
-            f"Добро пожаловать, {_esc(user.first_name)}\\!\n\n"
-            "Выберите действие на клавиатуре ниже\\.",
-            reply_markup=KB_MAIN,
-            parse_mode="MarkdownV2",
-        )
+        await _send(update, f"Добро пожаловать, {_esc(user.first_name)}\\!\nВыберите действие\\.", KB_MAIN)
         return MAIN_MENU
 
-    await update.message.reply_text(
-        "🔐 Для доступа введите пароль:",
-        reply_markup=ReplyKeyboardRemove(),
-    )
+    await update.message.reply_text("🔐 Для доступа введите пароль:", reply_markup=ReplyKeyboardRemove())
     return AUTH_PASSWORD
 
 
-async def auth_password_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Проверка пароля."""
+async def auth_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     user = update.effective_user
-    entered = update.message.text.strip()
+    pwd = update.message.text.strip()
 
-    # Удаляем сообщение с паролем из чата
     try:
         await update.message.delete()
     except Exception:
         pass
 
-    if entered == BOT_ACCESS_PASSWORD:
+    if pwd == BOT_ACCESS_PASSWORD:
         authorized_users.add(user.id)
-        logger.info(f"✅ Пользователь {user.id} ({user.first_name}) авторизован")
-        await update.message.reply_text(
-            f"✅ Доступ разрешён\\!\n\n"
-            f"Добро пожаловать, {_esc(user.first_name)}\\!\n"
-            "Выберите действие на клавиатуре ниже\\.",
-            reply_markup=KB_MAIN,
-            parse_mode="MarkdownV2",
-        )
+        logger.info(f"✅ Авторизован: {user.id} ({user.first_name})")
+        await _send(update, f"✅ Доступ разрешён\\!\nДобро пожаловать, {_esc(user.first_name)}\\!", KB_MAIN)
         return MAIN_MENU
-    else:
-        logger.warning(f"⛔ Неверный пароль от пользователя {user.id} ({user.first_name})")
-        await update.message.reply_text(
-            "❌ Неверный пароль\\. Попробуйте ещё раз или нажмите /start",
-            parse_mode="MarkdownV2",
-        )
-        return AUTH_PASSWORD
+
+    logger.warning(f"⛔ Неверный пароль: {user.id}")
+    await _send(update, "❌ Неверный пароль\\. Попробуйте ещё раз или /start")
+    return AUTH_PASSWORD
 
 
-async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def main_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
     user = update.effective_user
 
-    # Проверка сессии после рестарта контейнера
     if BOT_ACCESS_PASSWORD and user.id not in authorized_users:
-        await update.message.reply_text(
-            "🔐 Сессия истекла\\. Введите пароль:",
-            reply_markup=ReplyKeyboardRemove(),
-            parse_mode="MarkdownV2",
-        )
+        await update.message.reply_text("🔐 Сессия истекла. Введите пароль:", reply_markup=ReplyKeyboardRemove())
         return AUTH_PASSWORD
 
     if text == "📊 Выбрать филиал":
@@ -281,83 +228,71 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         branches = await fetch_branches()
         if not branches:
             await update.message.reply_text(
-                "❌ Не удалось загрузить список филиалов. Попробуйте позже.",
+                "❌ Не удалось загрузить список филиалов.\n\n"
+                "Возможные причины:\n"
+                "• Backend ещё запускается — подождите 30 сек\n"
+                "• Нет филиалов в главной таблице",
                 reply_markup=KB_MAIN,
             )
             return MAIN_MENU
 
-        context.user_data["branches"] = branches
-        kb_rows = [[b] for b in branches]
-        kb_rows.append(["🔙 Назад"])
-        kb = ReplyKeyboardMarkup(kb_rows, resize_keyboard=True, one_time_keyboard=False)
+        ctx.user_data["branches"] = branches
+        kb = ReplyKeyboardMarkup([[b] for b in branches] + [["🔙 Назад"]], resize_keyboard=True)
         await update.message.reply_text("Выберите филиал:", reply_markup=kb)
         return SELECT_BRANCH
 
     if text == "🚪 Выйти":
         authorized_users.discard(user.id)
-        context.user_data.clear()
-        await update.message.reply_text(
-            "👋 Вы вышли\\. Для повторного входа нажмите /start",
-            reply_markup=ReplyKeyboardRemove(),
-            parse_mode="MarkdownV2",
-        )
+        ctx.user_data.clear()
+        await update.message.reply_text("👋 Вы вышли. Для входа — /start", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
 
     if text == "ℹ️ Помощь":
-        await update.message.reply_text(
+        await _send(update,
             "🤖 *BarberCRM Bot*\n\n"
             "Бот для руководителя \\(только просмотр\\)\\.\n\n"
-            "📊 *Дашборд* — сводка выполнения плана\n"
-            "🌅 *Утренние мероприятия* — список мероприятий\n"
-            "🚶 *Полевые выходы* — проверки мастеров\n"
-            "🤝 *One\\-on\\-One* — индивидуальные встречи\n"
-            "📋 *Планы мастеров* — план/факт по мастерам\n"
-            "📊 *Еженедельные показатели* — метрики\n"
-            "⭐ *Отзывы* — учёт отзывов\n"
-            "👶 *Адаптация новичков* — статусы стажёров\n"
-            "📝 *Итоговые отчёты* — сводные отчёты\n\n"
+            "📈 *Дашборд* — сводка план/факт\n"
+            "🌅 *Утренние мероприятия*\n"
+            "🚶 *Полевые выходы*\n"
+            "🤝 *One\\-on\\-One*\n"
+            "📋 *Планы мастеров*\n"
+            "📊 *Еженедельные показатели*\n"
+            "⭐ *Отзывы*\n"
+            "👶 *Адаптация новичков*\n"
+            "📝 *Итоговые отчёты*\n\n"
             "🚪 *Выйти* — завершить сессию",
-            parse_mode="MarkdownV2",
-            reply_markup=KB_MAIN,
+            KB_MAIN,
         )
         return MAIN_MENU
 
     return MAIN_MENU
 
 
-async def select_branch_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def select_branch(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
 
     if text == "🔙 Назад":
         await update.message.reply_text("Главное меню:", reply_markup=KB_MAIN)
         return MAIN_MENU
 
-    branches = context.user_data.get("branches", [])
+    branches = ctx.user_data.get("branches", [])
     if text not in branches:
-        await update.message.reply_text("Пожалуйста, выберите филиал из списка.")
+        await update.message.reply_text("Выберите филиал из списка.")
         return SELECT_BRANCH
 
-    context.user_data["branch"] = text
-    await update.message.reply_text(
-        f"📍 Филиал: *{_esc(text)}*\nВыберите раздел:",
-        parse_mode="MarkdownV2",
-        reply_markup=KB_BRANCH_MENU,
-    )
+    ctx.user_data["branch"] = text
+    await _send(update, f"📍 Филиал: *{_esc(text)}*\nВыберите раздел:", KB_BRANCH_MENU)
     return BRANCH_MENU
 
 
-async def branch_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def branch_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     text = update.message.text
-    branch = context.user_data.get("branch", "")
+    branch = ctx.user_data.get("branch", "")
 
     if text == "🔙 Назад к списку филиалов":
-        branches = context.user_data.get("branches", [])
-        if not branches:
-            branches = await fetch_branches()
-            context.user_data["branches"] = branches
-        kb_rows = [[b] for b in branches]
-        kb_rows.append(["🔙 Назад"])
-        kb = ReplyKeyboardMarkup(kb_rows, resize_keyboard=True, one_time_keyboard=False)
+        branches = ctx.user_data.get("branches") or await fetch_branches()
+        ctx.user_data["branches"] = branches
+        kb = ReplyKeyboardMarkup([[b] for b in branches] + [["🔙 Назад"]], resize_keyboard=True)
         await update.message.reply_text("Выберите филиал:", reply_markup=kb)
         return SELECT_BRANCH
 
@@ -365,17 +300,10 @@ async def branch_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("⏳ Загружаю дашборд…")
         data = await api_get(f"dashboard-summary/{branch}")
         if data and data.get("success"):
-            msg = format_dashboard(data, branch)
-            for chunk in _split_message(msg, 4000):
-                await update.message.reply_text(
-                    chunk, parse_mode="MarkdownV2", reply_markup=KB_BRANCH_MENU
-                )
+            await _send(update, format_dashboard(data, branch), KB_BRANCH_MENU)
         else:
-            err = data.get("error", "Неизвестная ошибка") if data else "Нет ответа от сервера"
-            await update.message.reply_text(
-                f"❌ Ошибка загрузки дашборда: {err}",
-                reply_markup=KB_BRANCH_MENU,
-            )
+            err = (data or {}).get("error", "Нет ответа от сервера")
+            await update.message.reply_text(f"❌ Ошибка: {err}", reply_markup=KB_BRANCH_MENU)
         return BRANCH_MENU
 
     if text in SECTION_MAP:
@@ -384,70 +312,48 @@ async def branch_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         data = await api_get(f"{endpoint}/{branch}")
         if data and data.get("success") is not False:
             records = data.get("data", [])
-            msg = format_records(records, section_name, branch)
-            for chunk in _split_message(msg, 4000):
-                await update.message.reply_text(
-                    chunk, parse_mode="MarkdownV2", reply_markup=KB_BRANCH_MENU
-                )
+            await _send(update, format_records(records, section_name, branch), KB_BRANCH_MENU)
         else:
-            err = data.get("error", "Неизвестная ошибка") if data else "Нет ответа от сервера"
-            await update.message.reply_text(
-                f"❌ Ошибка: {err}", reply_markup=KB_BRANCH_MENU
-            )
+            err = (data or {}).get("error", "Нет ответа от сервера")
+            await update.message.reply_text(f"❌ Ошибка: {err}", reply_markup=KB_BRANCH_MENU)
         return BRANCH_MENU
 
-    await update.message.reply_text(
-        "Пожалуйста, выберите действие из меню.", reply_markup=KB_BRANCH_MENU
-    )
+    await update.message.reply_text("Выберите действие из меню.", reply_markup=KB_BRANCH_MENU)
     return BRANCH_MENU
 
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data.clear()
-    await update.message.reply_text(
-        "Бот остановлен\\. Нажмите /start для запуска\\.",
-        reply_markup=ReplyKeyboardRemove(),
-        parse_mode="MarkdownV2",
-    )
+async def cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    ctx.user_data.clear()
+    await update.message.reply_text("Бот остановлен. /start для запуска.", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
 
-# ─── Запуск ───────────────────────────────────────────────────
-
+# ─── main ─────────────────────────────────────────────────────
 def main():
     if not BOT_TOKEN:
-        logger.error("TELEGRAM_BOT_TOKEN не задан! Бот не запущен.")
+        logger.error("❌ TELEGRAM_BOT_TOKEN не задан!")
         return
 
     if not BOT_ACCESS_PASSWORD:
-        logger.warning("⚠️ BOT_ACCESS_PASSWORD не задан — бот работает БЕЗ ЗАЩИТЫ ПАРОЛЕМ!")
+        logger.warning("⚠️ BOT_ACCESS_PASSWORD не задан — доступ без пароля!")
+
+    logger.info(f"🔗 Backend URL: {BACKEND_URL}")
 
     app = Application.builder().token(BOT_TOKEN).build()
 
-    conv = ConversationHandler(
+    app.add_handler(ConversationHandler(
         entry_points=[CommandHandler("start", cmd_start)],
         states={
-            AUTH_PASSWORD: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, auth_password_handler),
-            ],
-            MAIN_MENU: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, main_menu_handler),
-            ],
-            SELECT_BRANCH: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, select_branch_handler),
-            ],
-            BRANCH_MENU: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, branch_menu_handler),
-            ],
+            AUTH_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, auth_handler)],
+            MAIN_MENU:     [MessageHandler(filters.TEXT & ~filters.COMMAND, main_menu)],
+            SELECT_BRANCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, select_branch)],
+            BRANCH_MENU:   [MessageHandler(filters.TEXT & ~filters.COMMAND, branch_menu)],
         },
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", cmd_start)],
         allow_reentry=True,
-    )
+    ))
 
-    app.add_handler(conv)
-
-    logger.info("🤖 BarberCRM Bot запущен (защита паролем: %s)",
-                "ДА" if BOT_ACCESS_PASSWORD else "НЕТ")
+    logger.info("🤖 BarberCRM Bot запущен (пароль: %s)", "ДА" if BOT_ACCESS_PASSWORD else "НЕТ")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 

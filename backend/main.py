@@ -554,6 +554,27 @@ def sum_reviews_for_month_from_data(records: List[Dict], month: str) -> int:
 def health_check():
     return {"status": "healthy", "version": "4.3.0", "cache_enabled": True, "cache_ttl": CACHE_TTL}
 
+@app.get("/branches")
+def get_branches():
+    """Список всех филиалов (названия). Используется Telegram-ботом."""
+    cache_key = "all_branches_list"
+    cached = get_from_cache(cache_key)
+    if cached:
+        return cached
+
+    try:
+        client = get_sheets_client()
+        spreadsheet = client.open_by_key(MASTER_SPREADSHEET_ID)
+        worksheet = spreadsheet.worksheet("Филиалы")
+        records = worksheet.get_all_records()
+        names = [r.get("Название", "") for r in records if r.get("Название")]
+        result = {"success": True, "branches": names}
+        set_cache(cache_key, result)
+        return result
+    except Exception as e:
+        logger.error(f"Ошибка получения списка филиалов: {e}")
+        return {"success": False, "branches": [], "error": str(e)}
+
 @app.get("/api/cache-stats")
 def get_cache_stats():
     """Статистика кеша"""
