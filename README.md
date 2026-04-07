@@ -1,130 +1,68 @@
-# BarberCRM v5.0 — Система управления сетью барбершопов
+# BarberCRM v5.0
 
-## Что изменилось (v4.3 → v5.0)
+CRM-система для сети барбершопов Barber House.
 
-- **Полный отказ от Google Sheets** — данные хранятся в SQLite на сервере
-- **Админ-панель** — отдельный вход для администратора с просмотром всех филиалов
-- **Собственный почтовый сервер** — поддержка любого SMTP (STARTTLS и SSL)
-- **Интеграция с хостовым Nginx** — CRM по IP:8080, сайт на домене не затрагивается
-- **Все настройки в .env** — деплой через `git pull`
+## Установка (первый раз)
 
-## Архитектура на сервере
-
-```
-Сервер (166.1.201.183)
-│
-├── Nginx (хост) — порт 80/443
-│   ├── barber-house.academy → /var/www/barber/dist + proxy :3100 (сайт)
-│   └── *:8080               → /var/www/barber-crm/frontend + proxy :8100 (CRM)
-│
-├── Docker
-│   ├── barber_crm_backend (:8100 → :8000) — FastAPI + SQLite
-│   └── barber_crm_bot — Telegram-бот
-│
-├── Node.js (:3100) — бэкенд сайта (не трогаем)
-└── amnezia-awg2 — VPN (не трогаем)
-```
-
-**Ключевой принцип:** CRM живёт на порту 8080, бэкенд на 8100 — оба привязаны к localhost/отдельному порту и никак не пересекаются с сайтом на 80/443.
-
-## Быстрый старт
-
-### 1. Клонирование
 ```bash
+# 1. Клонировать
 cd /opt
-git clone https://github.com/<your-repo>/barber-crm-app.git
+git clone https://github.com/<ваш-репо>/barber-crm-app.git
 cd barber-crm-app
-```
 
-### 2. Настройка .env
-```bash
+# 2. Настроить
 cp .env.example .env
 nano .env
+
+# 3. Запустить
+bash deploy.sh
 ```
 
-### 3. Деплой фронтенда
+CRM будет доступна: `http://ВАШ_IP:8080`
+
+## Обновление
+
 ```bash
-mkdir -p /var/www/barber-crm/frontend
-cp frontend/index.html frontend/App.jsx frontend/logo.png /var/www/barber-crm/frontend/
+cd /opt/barber-crm-app
+git pull
+bash deploy.sh
 ```
 
-### 4. Настройка Nginx
-```bash
-cp nginx/barber-crm.conf /etc/nginx/sites-available/barber-crm
-ln -s /etc/nginx/sites-available/barber-crm /etc/nginx/sites-enabled/barber-crm
-nginx -t && systemctl reload nginx
-```
+## Что где
 
-### 5. Запуск Docker
-```bash
-docker compose up -d --build
-```
+| Компонент | Адрес | Описание |
+|-----------|-------|----------|
+| CRM | http://IP:8080 | Веб-интерфейс |
+| Backend API | 127.0.0.1:8100 | FastAPI + SQLite (Docker) |
+| Telegram-бот | — | Работает через Backend API |
+| Сайт | https://barber-house.academy | Не затрагивается |
 
-### Проверка
-- **CRM:** http://166.1.201.183:8080
-- **Backend API:** http://166.1.201.183:8100/health (только с сервера: curl http://127.0.0.1:8100/health)
-- **Сайт:** https://barber-house.academy (не затронут)
-
-## Переменные окружения (.env)
-
-| Переменная | Описание | По умолчанию |
-|-----------|----------|-------------|
-| `ADMIN_USERNAME` | Логин админа | `admin` |
-| `ADMIN_PASSWORD` | Пароль админа | `admin` |
-| `SMTP_HOST` | Почтовый сервер | `mail.example.com` |
-| `SMTP_PORT` | Порт SMTP | `587` |
-| `SMTP_USER` | Email отправителя | — |
-| `SMTP_PASSWORD` | Пароль SMTP | — |
-| `SMTP_USE_SSL` | SSL вместо STARTTLS | `false` |
-| `REPORT_EMAIL_TO` | Email получателя отчётов | — |
-| `TELEGRAM_BOT_TOKEN` | Токен Telegram-бота | — |
-| `BOT_ACCESS_PASSWORD` | Пароль для бота | — |
-
-## GitHub Secrets для CI/CD
-
-| Secret | Описание |
-|--------|----------|
-| `SERVER_HOST` | IP сервера |
-| `SERVER_USER` | SSH-пользователь |
-| `SSH_PASSWORD` | SSH-пароль |
-| `ADMIN_USERNAME` | Логин админа |
-| `ADMIN_PASSWORD` | Пароль админа |
-| `SMTP_HOST` / `SMTP_PORT` | SMTP-сервер |
-| `SMTP_USER` / `SMTP_PASSWORD` | Почтовые реквизиты |
-| `SMTP_USE_SSL` | `true` или `false` |
-| `REPORT_EMAIL_TO` | Email для отчётов |
-| `TELEGRAM_BOT_TOKEN` | Токен бота |
-| `BOT_ACCESS_PASSWORD` | Пароль бота |
-
-## Структура проекта
+## Структура
 
 ```
 barber-crm-app/
-├── backend/
-│   ├── main.py              # FastAPI + SQLite
+├── backend/           # FastAPI + SQLite (Docker)
+│   ├── main.py
 │   ├── requirements.txt
 │   └── Dockerfile
-├── frontend/
-│   ├── index.html           # Точка входа
-│   ├── App.jsx              # React SPA (всё приложение)
+├── frontend/          # React SPA (раздаётся Nginx хоста)
+│   ├── index.html
+│   ├── App.jsx
 │   └── logo.png
-├── telegram-bot/
+├── telegram-bot/      # Telegram-бот (Docker)
 │   ├── bot.py
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── nginx/
-│   └── barber-crm.conf      # Конфиг для хостового Nginx (порт 8080)
-├── .github/workflows/
-│   └── deploy.yml
-├── docker-compose.yml        # Только backend + bot (без фронтенда)
-├── .env.example
-├── .gitignore
-└── README.md
+│   └── barber-crm.conf   # Конфиг для Nginx (порт 8080)
+├── docker-compose.yml     # Backend + Bot
+├── deploy.sh              # Скрипт деплоя
+├── .env.example           # Шаблон настроек
+└── .gitignore
 ```
 
-## Бэкап данных
+## Бэкап базы данных
 
 ```bash
-# БД в Docker volume
 docker cp barber_crm_backend:/app/data/barbercrm.db ./backup_$(date +%Y%m%d).db
 ```
