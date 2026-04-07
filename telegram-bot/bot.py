@@ -17,7 +17,7 @@ from telegram.ext import (
 
 # ─── Настройки ────────────────────────────────────────────────
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-BACKEND_URL = os.getenv("BACKEND_URL", "http://barber_backend:8000")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://barber_crm_backend:8000")
 BOT_ACCESS_PASSWORD = os.getenv("BOT_ACCESS_PASSWORD", "")
 
 logging.basicConfig(

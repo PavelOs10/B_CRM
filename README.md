@@ -5,62 +5,73 @@
 - **Полный отказ от Google Sheets** — данные хранятся в SQLite на сервере
 - **Админ-панель** — отдельный вход для администратора с просмотром всех филиалов
 - **Собственный почтовый сервер** — поддержка любого SMTP (STARTTLS и SSL)
-- **Вход по IP** — приложение работает на отдельном порту, не мешает основному сайту
-- **Nginx-проксирование API** — фронт и бэк общаются через `/api/`, не нужен отдельный порт
-- **Все настройки в .env** — деплой через `git pull`, секреты в GitHub Secrets
-- **Volume для БД** — данные сохраняются между перезапусками контейнеров
+- **Интеграция с хостовым Nginx** — CRM по IP:8080, сайт на домене не затрагивается
+- **Все настройки в .env** — деплой через `git pull`
 
-## Архитектура
+## Архитектура на сервере
 
 ```
-┌──────────────────────────────────────────────────┐
-│                   Docker Network                 │
-│                                                  │
-│  ┌──────────┐   ┌──────────┐   ┌──────────────┐ │
-│  │ Frontend │   │ Backend  │   │ Telegram Bot │ │
-│  │ (Nginx)  │──▶│ (FastAPI)│◀──│  (python-    │ │
-│  │  :3000   │   │  :8000   │   │  telegram-bot│ │
-│  └──────────┘   └────┬─────┘   └──────────────┘ │
-│                      │                           │
-│              ┌───────▼────────┐                  │
-│              │    SQLite DB   │                  │
-│              │  (Docker Vol)  │                  │
-│              └────────────────┘                  │
-└──────────────────────────────────────────────────┘
+Сервер (166.1.201.183)
+│
+├── Nginx (хост) — порт 80/443
+│   ├── barber-house.academy → /var/www/barber/dist + proxy :3100 (сайт)
+│   └── *:8080               → /var/www/barber-crm/frontend + proxy :8100 (CRM)
+│
+├── Docker
+│   ├── barber_crm_backend (:8100 → :8000) — FastAPI + SQLite
+│   └── barber_crm_bot — Telegram-бот
+│
+├── Node.js (:3100) — бэкенд сайта (не трогаем)
+└── amnezia-awg2 — VPN (не трогаем)
 ```
+
+**Ключевой принцип:** CRM живёт на порту 8080, бэкенд на 8100 — оба привязаны к localhost/отдельному порту и никак не пересекаются с сайтом на 80/443.
 
 ## Быстрый старт
 
 ### 1. Клонирование
 ```bash
+cd /opt
 git clone https://github.com/<your-repo>/barber-crm-app.git
 cd barber-crm-app
 ```
 
-### 2. Настройка
+### 2. Настройка .env
 ```bash
 cp .env.example .env
-nano .env   # заполните все переменные
+nano .env
 ```
 
-### 3. Запуск
+### 3. Деплой фронтенда
+```bash
+mkdir -p /var/www/barber-crm/frontend
+cp frontend/index.html frontend/App.jsx frontend/logo.png /var/www/barber-crm/frontend/
+```
+
+### 4. Настройка Nginx
+```bash
+cp nginx/barber-crm.conf /etc/nginx/sites-available/barber-crm
+ln -s /etc/nginx/sites-available/barber-crm /etc/nginx/sites-enabled/barber-crm
+nginx -t && systemctl reload nginx
+```
+
+### 5. Запуск Docker
 ```bash
 docker compose up -d --build
 ```
 
-После запуска:
-- **CRM:** `http://<IP-сервера>:3000`
-- **Backend API:** `http://<IP-сервера>:8000`
-- **Health check:** `http://<IP-сервера>:8000/health`
+### Проверка
+- **CRM:** http://166.1.201.183:8080
+- **Backend API:** http://166.1.201.183:8100/health (только с сервера: curl http://127.0.0.1:8100/health)
+- **Сайт:** https://barber-house.academy (не затронут)
 
 ## Переменные окружения (.env)
 
 | Переменная | Описание | По умолчанию |
 |-----------|----------|-------------|
-| `APP_PORT` | Порт фронтенда | `3000` |
 | `ADMIN_USERNAME` | Логин админа | `admin` |
 | `ADMIN_PASSWORD` | Пароль админа | `admin` |
-| `SMTP_HOST` | Адрес почтового сервера | `mail.example.com` |
+| `SMTP_HOST` | Почтовый сервер | `mail.example.com` |
 | `SMTP_PORT` | Порт SMTP | `587` |
 | `SMTP_USER` | Email отправителя | — |
 | `SMTP_PASSWORD` | Пароль SMTP | — |
@@ -73,16 +84,13 @@ docker compose up -d --build
 
 | Secret | Описание |
 |--------|----------|
-| `SERVER_HOST` | IP-адрес сервера |
+| `SERVER_HOST` | IP сервера |
 | `SERVER_USER` | SSH-пользователь |
 | `SSH_PASSWORD` | SSH-пароль |
-| `APP_PORT` | Порт CRM (например `3000`) |
 | `ADMIN_USERNAME` | Логин админа |
 | `ADMIN_PASSWORD` | Пароль админа |
-| `SMTP_HOST` | SMTP-сервер |
-| `SMTP_PORT` | Порт SMTP |
-| `SMTP_USER` | Email отправителя |
-| `SMTP_PASSWORD` | Пароль SMTP |
+| `SMTP_HOST` / `SMTP_PORT` | SMTP-сервер |
+| `SMTP_USER` / `SMTP_PASSWORD` | Почтовые реквизиты |
 | `SMTP_USE_SSL` | `true` или `false` |
 | `REPORT_EMAIL_TO` | Email для отчётов |
 | `TELEGRAM_BOT_TOKEN` | Токен бота |
@@ -97,38 +105,26 @@ barber-crm-app/
 │   ├── requirements.txt
 │   └── Dockerfile
 ├── frontend/
-│   ├── index.html
-│   ├── App.jsx              # React SPA (CDN + Babel)
-│   ├── nginx.conf           # Nginx с проксированием /api/
-│   ├── logo.png
-│   └── Dockerfile
+│   ├── index.html           # Точка входа
+│   ├── App.jsx              # React SPA (всё приложение)
+│   └── logo.png
 ├── telegram-bot/
 │   ├── bot.py
 │   ├── requirements.txt
 │   └── Dockerfile
+├── nginx/
+│   └── barber-crm.conf      # Конфиг для хостового Nginx (порт 8080)
 ├── .github/workflows/
 │   └── deploy.yml
-├── docker-compose.yml
+├── docker-compose.yml        # Только backend + bot (без фронтенда)
 ├── .env.example
 ├── .gitignore
 └── README.md
 ```
 
-## Совместимость с существующим сервером
-
-Сервер уже обслуживает сайт на порту 80 (через домен). CRM запускается на отдельном порту (по умолчанию 3000) и доступна по IP:
-
-- **Сайт:** `https://yourdomain.com` (порт 80/443, через домен)
-- **CRM:** `http://YOUR_IP:3000` (по IP-адресу)
-
 ## Бэкап данных
 
-База данных хранится в Docker volume `barber_data`. Для бэкапа:
-
 ```bash
-# Скопировать БД из контейнера
-docker cp barber_backend:/app/data/barbercrm.db ./backup_$(date +%Y%m%d).db
-
-# Или найти volume на хосте
-docker volume inspect barber-crm-app_barber_data
+# БД в Docker volume
+docker cp barber_crm_backend:/app/data/barbercrm.db ./backup_$(date +%Y%m%d).db
 ```

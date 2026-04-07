@@ -3,7 +3,7 @@ version: '3.8'
 services:
   backend:
     build: ./backend
-    container_name: barber_backend
+    container_name: barber_crm_backend
     restart: unless-stopped
     environment:
       DB_PATH: /app/data/barbercrm.db
@@ -18,7 +18,7 @@ services:
     volumes:
       - barber_data:/app/data
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8100:8000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -26,23 +26,13 @@ services:
       retries: 3
       start_period: 20s
 
-  frontend:
-    build: ./frontend
-    container_name: barber_frontend
-    restart: unless-stopped
-    ports:
-      - "${APP_PORT:-3000}:80"
-    depends_on:
-      backend:
-        condition: service_healthy
-
   telegram-bot:
     build: ./telegram-bot
-    container_name: barber_telegram_bot
+    container_name: barber_crm_bot
     restart: unless-stopped
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      BACKEND_URL: http://barber_backend:8000
+      BACKEND_URL: http://barber_crm_backend:8000
       BOT_ACCESS_PASSWORD: ${BOT_ACCESS_PASSWORD:-}
     depends_on:
       backend:
@@ -54,4 +44,4 @@ volumes:
 
 networks:
   default:
-    name: barber_network
+    name: barber_crm_network
