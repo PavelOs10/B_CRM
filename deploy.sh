@@ -25,6 +25,29 @@ echo "  BarberCRM v5.0 — Деплой"
 echo "=========================================="
 echo ""
 
+# ---------- 0. Проверка docker compose ----------
+echo -n "[0/6] Проверка Docker Compose... "
+if docker compose version > /dev/null 2>&1; then
+    DC="docker compose"
+    echo -e "${GREEN}OK${NC} (docker compose)"
+elif docker-compose --version > /dev/null 2>&1; then
+    DC="docker-compose"
+    echo -e "${GREEN}OK${NC} (docker-compose)"
+else
+    echo -e "${RED}НЕ НАЙДЕН${NC}"
+    echo ""
+    echo "  Устанавливаю docker-compose-v2..."
+    apt-get update -qq && apt-get install -y -qq docker-compose-v2
+    if docker compose version > /dev/null 2>&1; then
+        DC="docker compose"
+        echo -e "  ${GREEN}✓ Установлен${NC}"
+    else
+        echo -e "  ${RED}Не удалось установить. Установите вручную:${NC}"
+        echo "    apt install docker-compose-v2"
+        exit 1
+    fi
+fi
+
 # ---------- 1. Проверка .env ----------
 echo -n "[1/6] Проверка .env... "
 if [ ! -f "$PROJECT_DIR/.env" ]; then
@@ -82,16 +105,16 @@ fi
 # ---------- 4. Остановка старых контейнеров ----------
 echo -n "[4/6] Остановка старых контейнеров... "
 cd "$PROJECT_DIR"
-docker compose down --remove-orphans 2>/dev/null || true
+$DC down --remove-orphans 2>/dev/null || true
 echo -e "${GREEN}OK${NC}"
 
 # ---------- 5. Сборка и запуск ----------
 echo "[5/6] Сборка Docker-образов..."
-docker compose build --no-cache
+$DC build --no-cache
 echo ""
 
 echo -n "[5/6] Запуск контейнеров... "
-docker compose up -d
+$DC up -d
 echo -e "${GREEN}OK${NC}"
 
 # ---------- 6. Проверка ----------
