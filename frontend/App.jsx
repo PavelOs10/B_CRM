@@ -1,153 +1,75 @@
 const { useState, useEffect, useRef } = React;
 
 // ==================== CONFIG ====================
-const API_BASE_URL = 'http://176.32.37.98:8000';
+// API URL: используем /api/ проксирование через Nginx (без явного порта)
+const API_BASE_URL = '/api';
 
 const BRANCH_GOALS = {
-  morning_events: 16,
-  field_visits: 4,
-  one_on_one: 6,
-  weekly_reports: 4,
-  master_plans: 10,
-  reviews: 52,
-  new_employees: 10
+  morning_events: 16, field_visits: 4, one_on_one: 6,
+  weekly_reports: 4, master_plans: 10, reviews: 52, new_employees: 10
 };
+
 // ==================== API ====================
 const api = {
   async request(endpoint, options = {}) {
-    try {
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-        ...options,
-        headers: {
-          'Content-Type': 'application/json',
-          ...options.headers,
-        },
-      });
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(data.detail || `HTTP ${response.status}`);
-      }
-      
-      return data;
-    } catch (error) {
-      console.error('API Error:', error);
-      throw error;
-    }
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      ...options,
+      headers: { 'Content-Type': 'application/json', ...options.headers },
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+    return data;
   }
 };
 
 // ==================== UTILS ====================
-
 const getWeekNumber = (date) => {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
+  const d = new Date(date); d.setHours(0,0,0,0);
   d.setDate(d.getDate() + 4 - (d.getDay() || 7));
   const yearStart = new Date(d.getFullYear(), 0, 1);
-  const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-  return weekNo;
+  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
 };
-
 const getCurrentMonth = () => {
-  const months = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+  const months = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
   const now = new Date();
   return `${months[now.getMonth()]} ${now.getFullYear()}`;
 };
 
+// ==================== ICONS ====================
 const Icons = {
-  Plus: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-  ),
-  Calendar: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-  ),
-  Users: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
-  ),
-  Chart: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
-  ),
-  Star: ({className, filled}) => (
-    <svg className={className} fill={filled ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>
-  ),
-  Check: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-  ),
-  X: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-  ),
-  Menu: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
-  ),
-  Eye: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-  ),
-  Info: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-  ),
-  ChevronDown: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-  ),
-  ChevronUp: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
-  ),
-  // НОВЫЕ ИКОНКИ для разных вкладок
-  Sunrise: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
-  ),
-  Clipboard: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>
-  ),
-  UserGroup: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
-  ),
-  TrendingUp: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
-  ),
-  AcademicCap: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5zm0 0l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14zm-4 6v-7.5l4-2.222" /></svg>
-  ),
-  Target: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-  ),
-  ChatAlt: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
-  ),
-  ClipboardList: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
-  ),
-  Dashboard: ({className}) => (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 16a1 1 0 011-1h4a1 1 0 011 1v3a1 1 0 01-1 1H5a1 1 0 01-1-1v-3zM14 13a1 1 0 011-1h4a1 1 0 011 1v6a1 1 0 01-1 1h-4a1 1 0 01-1-1v-6z" /></svg>
-  )
+  Plus: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>),
+  Calendar: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>),
+  Users: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>),
+  Star: ({className, filled}) => (<svg className={className} fill={filled ? "currentColor" : "none"} viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>),
+  Check: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>),
+  X: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>),
+  Menu: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>),
+  Info: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>),
+  ChevronDown: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>),
+  ChevronUp: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>),
+  Sunrise: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>),
+  Clipboard: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>),
+  UserGroup: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>),
+  TrendingUp: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>),
+  AcademicCap: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14zm-4 6v-7.5l4-2.222" /></svg>),
+  Target: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>),
+  ChatAlt: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>),
+  ClipboardList: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>),
+  Dashboard: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 16a1 1 0 011-1h4a1 1 0 011 1v3a1 1 0 01-1 1H5a1 1 0 01-1-1v-3zM14 13a1 1 0 011-1h4a1 1 0 011 1v6a1 1 0 01-1 1h-4a1 1 0 01-1-1v-6z" /></svg>),
+  Shield: ({className}) => (<svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>),
 };
 
-// ==================== COMPONENTS ====================
-
-const StarRating = ({ value, onChange, max = 10, size = "md" }) => {
+// ==================== UI COMPONENTS ====================
+const StarRating = ({ value, onChange, max = 10 }) => {
   const [hovered, setHovered] = useState(null);
-  const sizeClasses = { sm: "w-5 h-5", md: "w-7 h-7", lg: "w-9 h-9" };
-  
   return (
     <div className="flex gap-1">
       {[...Array(max)].map((_, i) => (
-        <button
-          key={i}
-          type="button"
-          onClick={() => onChange(i + 1)}
-          onMouseEnter={() => setHovered(i + 1)}
-          onMouseLeave={() => setHovered(null)}
-          className="transition-transform hover:scale-110"
-        >
-          <Icons.Star 
-            className={`${sizeClasses[size]} ${
-              (hovered !== null ? i < hovered : i < value) ? 'text-yellow-400' : 'text-gray-300'
-            }`}
-            filled={(hovered !== null ? i < hovered : i < value)}
-          />
+        <button key={i} type="button" onClick={() => onChange(i + 1)} onMouseEnter={() => setHovered(i + 1)} onMouseLeave={() => setHovered(null)} className="transition-transform hover:scale-110">
+          <Icons.Star className={`w-7 h-7 ${(hovered !== null ? i < hovered : i < value) ? 'text-yellow-400' : 'text-gray-300'}`} filled={(hovered !== null ? i < hovered : i < value)} />
         </button>
       ))}
-      <span className="ml-2 text-sm font-medium text-gray-700 self-center">{hovered || value}/10</span>
+      <span className="ml-2 text-sm font-medium text-gray-700 self-center">{hovered || value}/{max}</span>
     </div>
   );
 };
@@ -155,8 +77,7 @@ const StarRating = ({ value, onChange, max = 10, size = "md" }) => {
 const FormInput = ({ label, tooltip, required, error, children }) => (
   <div className="space-y-2">
     <label className="block text-sm font-medium text-gray-700">
-      {label}
-      {required && <span className="text-red-500 ml-1">*</span>}
+      {label}{required && <span className="text-red-500 ml-1">*</span>}
       {tooltip && <span className="ml-2 text-gray-400 text-xs">ℹ️ {tooltip}</span>}
     </label>
     {children}
@@ -165,203 +86,112 @@ const FormInput = ({ label, tooltip, required, error, children }) => (
 );
 
 const Toast = ({ message, type = 'success', onClose }) => {
-  useEffect(() => {
-    const timer = setTimeout(onClose, 5000);
-    return () => clearTimeout(timer);
-  }, [onClose]);
-  
-  const bgColor = type === 'success' ? 'bg-green-500' : type === 'error' ? 'bg-red-500' : 'bg-blue-500';
-  
+  useEffect(() => { const t = setTimeout(onClose, 5000); return () => clearTimeout(t); }, [onClose]);
+  const bg = type === 'success' ? 'bg-green-500' : type === 'error' ? 'bg-red-500' : 'bg-blue-500';
   return (
-    <div className={`fixed top-4 right-4 ${bgColor} text-white px-6 py-4 rounded-lg shadow-lg flex items-center gap-3 animate-fade-in z-50`}>
+    <div className={`fixed top-4 right-4 ${bg} text-white px-6 py-4 rounded-lg shadow-lg flex items-center gap-3 animate-fade-in z-50`}>
       {type === 'success' && <Icons.Check className="w-5 h-5" />}
       <span className="font-medium">{message}</span>
-      <button onClick={onClose} className="ml-2 hover:bg-white/20 p-1 rounded">
-        <Icons.X className="w-4 h-4" />
-      </button>
+      <button onClick={onClose} className="ml-2 hover:bg-white/20 p-1 rounded"><Icons.X className="w-4 h-4" /></button>
     </div>
   );
 };
 
 const InstructionBanner = ({ title, children, defaultOpen = false }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
-  
   return (
     <div className="bg-blue-50 border-l-4 border-blue-500 rounded-r-lg overflow-hidden mb-6">
-      <button 
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between p-4 hover:bg-blue-100 transition-colors"
-      >
+      <button onClick={() => setIsOpen(!isOpen)} className="w-full flex items-center justify-between p-4 hover:bg-blue-100 transition-colors">
         <div className="flex items-center gap-3">
           <Icons.Info className="w-5 h-5 text-blue-500 flex-shrink-0" />
           <h4 className="font-semibold text-blue-900">{title}</h4>
         </div>
-        {isOpen ? (
-          <Icons.ChevronUp className="w-5 h-5 text-blue-600" />
-        ) : (
-          <Icons.ChevronDown className="w-5 h-5 text-blue-600" />
-        )}
+        {isOpen ? <Icons.ChevronUp className="w-5 h-5 text-blue-600" /> : <Icons.ChevronDown className="w-5 h-5 text-blue-600" />}
       </button>
-      
-      {isOpen && (
-        <div className="px-4 pb-4 text-sm text-blue-800 space-y-2 animate-fade-in">
-          {children}
-        </div>
-      )}
+      {isOpen && <div className="px-4 pb-4 text-sm text-blue-800 space-y-2 animate-fade-in">{children}</div>}
     </div>
   );
 };
 
-// ==================== AUTH ====================
-
-const AuthPage = ({ onAuth }) => {
+// ==================== AUTH PAGE ====================
+const AuthPage = ({ onAuth, onAdminAuth }) => {
   const [mode, setMode] = useState('login');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  
   const [loginName, setLoginName] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
-  
   const [regName, setRegName] = useState('');
   const [regAddress, setRegAddress] = useState('');
   const [regManager, setRegManager] = useState('');
   const [regPhone, setRegPhone] = useState('');
   const [regPassword, setRegPassword] = useState('');
+  const [adminUser, setAdminUser] = useState('');
+  const [adminPass, setAdminPass] = useState('');
 
   const handleLogin = async (e) => {
-    e.preventDefault();
-    setError(null);
-    
+    e.preventDefault(); setError(null); setLoading(true);
     try {
-      setLoading(true);
-      const data = await api.request('/login', {
-        method: 'POST',
-        body: JSON.stringify({ name: loginName.trim(), password: loginPassword }),
-      });
-
-      if (data.success) {
-        onAuth(data.branch, data.token);
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+      const data = await api.request('/login', { method: 'POST', body: JSON.stringify({ name: loginName.trim(), password: loginPassword }) });
+      if (data.success) onAuth(data.branch, data.token);
+    } catch (err) { setError(err.message); } finally { setLoading(false); }
   };
 
   const handleRegister = async (e) => {
-    e.preventDefault();
-    setError(null);
-    
+    e.preventDefault(); setError(null); setLoading(true);
     try {
-      setLoading(true);
-      const data = await api.request('/register', {
-        method: 'POST',
-        body: JSON.stringify({
-          name: regName.trim(),
-          address: regAddress.trim(),
-          manager_name: regManager.trim(),
-          manager_phone: regPhone.trim(),
-          password: regPassword,
-        }),
-      });
+      const data = await api.request('/register', { method: 'POST', body: JSON.stringify({ name: regName.trim(), address: regAddress.trim(), manager_name: regManager.trim(), manager_phone: regPhone.trim(), password: regPassword }) });
+      if (data.success) { setMode('login'); setLoginName(regName); setError(null); }
+    } catch (err) { setError(err.message); } finally { setLoading(false); }
+  };
 
-      if (data.success) {
-        setMode('login');
-        setLoginName(regName);
-        setError(null);
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+  const handleAdminLogin = async (e) => {
+    e.preventDefault(); setError(null); setLoading(true);
+    try {
+      const data = await api.request('/admin/login', { method: 'POST', body: JSON.stringify({ username: adminUser, password: adminPass }) });
+      if (data.success) onAdminAuth(data.token);
+    } catch (err) { setError(err.message); } finally { setLoading(false); }
   };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-2">
-            BarberCRM
-          </h1>
-          <p className="text-gray-600">v4.3.0 @IDDQD11</p>
+          <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-2">BarberCRM</h1>
+          <p className="text-gray-600">v5.0</p>
         </div>
 
-        <div className="flex gap-2 mb-6 p-1 bg-gray-100 rounded-lg">
-          <button
-            onClick={() => {setMode('login'); setError(null);}}
-            className={`flex-1 py-2 px-4 rounded-md font-medium transition-all ${
-              mode === 'login' ? 'bg-white text-blue-600 shadow' : 'text-gray-600'
-            }`}
-          >
-            Вход
-          </button>
-          <button
-            onClick={() => {setMode('register'); setError(null);}}
-            className={`flex-1 py-2 px-4 rounded-md font-medium transition-all ${
-              mode === 'register' ? 'bg-white text-blue-600 shadow' : 'text-gray-600'
-            }`}
-          >
-            Регистрация
-          </button>
+        <div className="flex gap-1 mb-6 p-1 bg-gray-100 rounded-lg">
+          {['login','register','admin'].map(m => (
+            <button key={m} onClick={() => {setMode(m); setError(null);}} className={`flex-1 py-2 px-3 rounded-md font-medium text-sm transition-all ${mode === m ? 'bg-white text-blue-600 shadow' : 'text-gray-600'}`}>
+              {m === 'login' ? 'Вход' : m === 'register' ? 'Регистрация' : 'Админ'}
+            </button>
+          ))}
         </div>
 
-        {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
-            {error}
-          </div>
-        )}
+        {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">{error}</div>}
 
-        {mode === 'login' ? (
+        {mode === 'login' && (
           <form onSubmit={handleLogin} className="space-y-4">
-            <FormInput label="Название филиала" required>
-              <input
-                type="text"
-                value={loginName}
-                onChange={(e) => setLoginName(e.target.value)}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Например: Станкевича"
-              />
-            </FormInput>
-
-            <FormInput label="Пароль" required>
-              <input
-                type="password"
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </FormInput>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold py-3 rounded-lg hover:shadow-lg transition-all disabled:opacity-50"
-            >
-              {loading ? 'Вход...' : 'Войти'}
-            </button>
+            <FormInput label="Название филиала" required><input type="text" value={loginName} onChange={(e) => setLoginName(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Например: Станкевича" /></FormInput>
+            <FormInput label="Пароль" required><input type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" /></FormInput>
+            <button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold py-3 rounded-lg hover:shadow-lg transition-all disabled:opacity-50">{loading ? 'Вход...' : 'Войти'}</button>
           </form>
-        ) : (
+        )}
+        {mode === 'register' && (
           <form onSubmit={handleRegister} className="space-y-4">
-            <FormInput label="Название филиала" required>
-              <input type="text" value={regName} onChange={(e) => setRegName(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            </FormInput>
-            <FormInput label="Адрес" required>
-              <input type="text" value={regAddress} onChange={(e) => setRegAddress(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            </FormInput>
-            <FormInput label="Имя управляющего" required>
-              <input type="text" value={regManager} onChange={(e) => setRegManager(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            </FormInput>
-            <FormInput label="Телефон" required>
-              <input type="tel" value={regPhone} onChange={(e) => setRegPhone(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            </FormInput>
-            <FormInput label="Пароль (минимум 6 символов)" required>
-              <input type="password" value={regPassword} onChange={(e) => setRegPassword(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            </FormInput>
-            <button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-green-600 to-blue-600 text-white font-semibold py-3 rounded-lg hover:shadow-lg transition-all disabled:opacity-50">
-              {loading ? 'Регистрация...' : 'Зарегистрировать'}
-            </button>
+            <FormInput label="Название филиала" required><input type="text" value={regName} onChange={(e) => setRegName(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" /></FormInput>
+            <FormInput label="Адрес" required><input type="text" value={regAddress} onChange={(e) => setRegAddress(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" /></FormInput>
+            <FormInput label="Имя управляющего" required><input type="text" value={regManager} onChange={(e) => setRegManager(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" /></FormInput>
+            <FormInput label="Телефон" required><input type="tel" value={regPhone} onChange={(e) => setRegPhone(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" /></FormInput>
+            <FormInput label="Пароль" required><input type="password" value={regPassword} onChange={(e) => setRegPassword(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" /></FormInput>
+            <button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-green-600 to-blue-600 text-white font-semibold py-3 rounded-lg hover:shadow-lg transition-all disabled:opacity-50">{loading ? 'Регистрация...' : 'Зарегистрировать'}</button>
+          </form>
+        )}
+        {mode === 'admin' && (
+          <form onSubmit={handleAdminLogin} className="space-y-4">
+            <FormInput label="Логин администратора" required><input type="text" value={adminUser} onChange={(e) => setAdminUser(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" /></FormInput>
+            <FormInput label="Пароль" required><input type="password" value={adminPass} onChange={(e) => setAdminPass(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" /></FormInput>
+            <button type="submit" disabled={loading} className="w-full bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold py-3 rounded-lg hover:shadow-lg transition-all disabled:opacity-50">{loading ? 'Вход...' : 'Войти как администратор'}</button>
           </form>
         )}
       </div>
@@ -369,6 +199,155 @@ const AuthPage = ({ onAuth }) => {
   );
 };
 
+// ==================== ADMIN PANEL ====================
+const AdminPanel = ({ onLogout }) => {
+  const [dashboards, setDashboards] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [selectedBranch, setSelectedBranch] = useState(null);
+  const [selectedSection, setSelectedSection] = useState(null);
+  const [sectionData, setSectionData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  const sections = [
+    { id: 'morning-events', label: 'Утренние мероприятия' },
+    { id: 'field-visits', label: 'Полевые выходы' },
+    { id: 'one-on-one', label: 'One-on-One' },
+    { id: 'weekly-metrics', label: 'Еженедельные показатели' },
+    { id: 'master-plans', label: 'Планы мастеров' },
+    { id: 'reviews', label: 'Отзывы' },
+    { id: 'newbie-adaptation', label: 'Адаптация новичков' },
+    { id: 'branch-summary', label: 'Итоговые отчёты' },
+  ];
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const [dashData, brData] = await Promise.all([
+        api.request('/admin/all-dashboards'),
+        api.request('/branches/details'),
+      ]);
+      setDashboards(dashData.data || []);
+      setBranches(brData.branches || []);
+    } catch (err) { console.error(err); }
+    setLoading(false);
+  };
+
+  const loadSectionData = async (branchName, sectionId) => {
+    setSelectedBranch(branchName);
+    setSelectedSection(sectionId);
+    try {
+      const data = await api.request(`/admin/branch-data/${branchName}/${sectionId}`);
+      setSectionData(data.data || []);
+    } catch (err) { console.error(err); setSectionData([]); }
+  };
+
+  const getPct = (item, key) => {
+    const d = item[key];
+    if (!d) return 0;
+    return d.goal > 0 ? Math.round((d.current / d.goal) * 100) : 0;
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <header className="bg-gradient-to-r from-purple-700 to-pink-600 text-white px-6 py-4 flex items-center justify-between shadow-lg">
+        <div className="flex items-center gap-3">
+          <Icons.Shield className="w-8 h-8" />
+          <div>
+            <h1 className="text-xl font-bold">BarberCRM — Администратор</h1>
+            <p className="text-purple-200 text-sm">Сводка по всем филиалам</p>
+          </div>
+        </div>
+        <button onClick={onLogout} className="px-4 py-2 bg-white/20 rounded-lg hover:bg-white/30 transition font-medium">Выйти</button>
+      </header>
+
+      <div className="p-6">
+        {loading ? (
+          <div className="text-center py-16 text-gray-500">Загрузка данных...</div>
+        ) : selectedBranch && selectedSection ? (
+          <div className="animate-fade-in">
+            <button onClick={() => { setSelectedBranch(null); setSelectedSection(null); }} className="mb-4 px-4 py-2 bg-white rounded-lg shadow hover:bg-gray-50 text-sm font-medium">← Назад к сводке</button>
+            <h2 className="text-2xl font-bold mb-4">{selectedBranch} — {sections.find(s => s.id === selectedSection)?.label}</h2>
+            {sectionData.length === 0 ? (
+              <div className="bg-white rounded-xl p-8 text-center text-gray-500">Нет данных</div>
+            ) : (
+              <div className="bg-white rounded-xl shadow-sm overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50">
+                    <tr>{Object.keys(sectionData[0]).map(k => <th key={k} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">{k}</th>)}</tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {sectionData.map((row, i) => (
+                      <tr key={i} className="hover:bg-gray-50">
+                        {Object.values(row).map((v, j) => <td key={j} className="px-4 py-3 text-sm whitespace-nowrap">{v}</td>)}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            {/* Branches overview */}
+            <h2 className="text-2xl font-bold mb-6">Сводка за {dashboards[0]?.month || getCurrentMonth()}</h2>
+            <div className="space-y-6">
+              {dashboards.map((item, idx) => {
+                const totalPct = Math.round(
+                  (getPct(item,'morning_events') + getPct(item,'field_visits') + getPct(item,'one_on_one') + getPct(item,'master_plans') + getPct(item,'weekly_reports') + getPct(item,'reviews') + getPct(item,'new_employees')) / 7
+                );
+                return (
+                  <div key={idx} className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 animate-fade-in">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h3 className="text-xl font-bold text-gray-800">{item.branch_name}</h3>
+                        <p className="text-sm text-gray-500">Управляющий: {item.manager}</p>
+                      </div>
+                      <div className={`text-2xl font-bold px-4 py-2 rounded-lg ${totalPct >= 75 ? 'bg-green-100 text-green-700' : totalPct >= 50 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
+                        {totalPct}%
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-4">
+                      {[
+                        ['morning_events','Утренние','🌅'],['field_visits','Полевые','🚶'],['one_on_one','1-on-1','🤝'],
+                        ['master_plans','Планы','📋'],['weekly_reports','Еженед.','📊'],['reviews','Отзывы','⭐'],['new_employees','Новички','👶']
+                      ].map(([key, label, emoji]) => {
+                        const d = item[key] || {current:0,goal:1};
+                        const pct = d.goal > 0 ? Math.round((d.current/d.goal)*100) : 0;
+                        return (
+                          <div key={key} className="text-center p-2 rounded-lg bg-gray-50">
+                            <div className="text-lg">{emoji}</div>
+                            <div className="text-xs text-gray-500">{label}</div>
+                            <div className="font-bold">{d.current}/{d.goal}</div>
+                            <div className={`text-xs font-medium ${pct >= 100 ? 'text-green-600' : pct >= 50 ? 'text-yellow-600' : 'text-red-600'}`}>{pct}%</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {sections.map(s => (
+                        <button key={s.id} onClick={() => loadSectionData(item.branch_name, s.id)} className="px-3 py-1 text-xs bg-blue-50 text-blue-700 rounded-full hover:bg-blue-100 transition font-medium">
+                          {s.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+              {dashboards.length === 0 && (
+                <div className="bg-white rounded-xl p-8 text-center text-gray-500">Нет зарегистрированных филиалов</div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
 // ==================== MAIN CRM ====================
 
 const BarberCRM = ({ branch, token, onLogout }) => {
@@ -1793,12 +1772,17 @@ const BranchSummaryPage = ({ branch, showToast }) => {
 const App = () => {
   const [branch, setBranch] = useState(null);
   const [token, setToken] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     const savedBranch = localStorage.getItem('barber_branch');
     const savedToken = localStorage.getItem('barber_token');
+    const savedAdmin = localStorage.getItem('barber_admin');
     
-    if (savedBranch && savedToken) {
+    if (savedAdmin) {
+      setIsAdmin(true);
+      setToken(savedAdmin);
+    } else if (savedBranch && savedToken) {
       try {
         setBranch(JSON.parse(savedBranch));
         setToken(savedToken);
@@ -1812,19 +1796,36 @@ const App = () => {
   const handleAuth = (branchData, authToken) => {
     setBranch(branchData);
     setToken(authToken);
+    setIsAdmin(false);
     localStorage.setItem('barber_branch', JSON.stringify(branchData));
     localStorage.setItem('barber_token', authToken);
+    localStorage.removeItem('barber_admin');
+  };
+
+  const handleAdminAuth = (adminToken) => {
+    setIsAdmin(true);
+    setToken(adminToken);
+    setBranch(null);
+    localStorage.setItem('barber_admin', adminToken);
+    localStorage.removeItem('barber_branch');
+    localStorage.removeItem('barber_token');
   };
 
   const handleLogout = () => {
     setBranch(null);
     setToken(null);
+    setIsAdmin(false);
     localStorage.removeItem('barber_branch');
     localStorage.removeItem('barber_token');
+    localStorage.removeItem('barber_admin');
   };
 
+  if (isAdmin && token) {
+    return <AdminPanel onLogout={handleLogout} />;
+  }
+
   if (!branch || !token) {
-    return <AuthPage onAuth={handleAuth} />;
+    return <AuthPage onAuth={handleAuth} onAdminAuth={handleAdminAuth} />;
   }
 
   return <BarberCRM branch={branch} token={token} onLogout={handleLogout} />;

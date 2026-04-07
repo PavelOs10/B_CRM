@@ -1,16 +1,13 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
-import gspread
-from google.oauth2.service_account import Credentials
 import json
 import os
 from datetime import datetime, timedelta
 import hashlib
 import secrets
 import logging
-from functools import lru_cache
 import time
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -18,15 +15,15 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 import io
+import sqlite3
+from contextlib import contextmanager
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-
-
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="BarberCRM API", version="4.3.0")
+app = FastAPI(title="BarberCRM API", version="5.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,64 +33,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-
-# ============= EMAIL НАСТРОЙКИ =============
-REPORT_EMAIL_TO = os.getenv('REPORT_EMAIL_TO', '')  # Куда отправлять отчёты
-SMTP_HOST = os.getenv('SMTP_HOST', 'smtp.gmail.com')
+# ============= НАСТРОЙКИ ИЗ .env =============
+REPORT_EMAIL_TO = os.getenv('REPORT_EMAIL_TO', '')
+SMTP_HOST = os.getenv('SMTP_HOST', 'mail.example.com')
 SMTP_PORT = int(os.getenv('SMTP_PORT', '587'))
-SMTP_USER = os.getenv('SMTP_USER', '')  # Email отправителя
-SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', '')  # App Password для Gmail
+SMTP_USER = os.getenv('SMTP_USER', '')
+SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', '')
+SMTP_USE_SSL = os.getenv('SMTP_USE_SSL', 'false').lower() == 'true'
 
-# ============= КЕШИРОВАНИЕ =============
+ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', 'admin')
+ADMIN_PASSWORD_HASH = hashlib.sha256(os.getenv('ADMIN_PASSWORD', 'admin').encode()).hexdigest()
 
-# Кеш для данных (время жизни: 300 секунд = 5 минут)
-cache_store = {}
-CACHE_TTL = 300  # Увеличено с 60 до 300 секунд для снижения нагрузки на API
-
-def get_from_cache(key: str):
-    """Получить данные из кеша"""
-    if key in cache_store:
-        data, timestamp = cache_store[key]
-        age = time.time() - timestamp
-        if age < CACHE_TTL:
-            logger.debug(f"📦 Кеш HIT: {key} (возраст: {int(age)}s)")
-            return data
-        else:
-            logger.debug(f"⏰ Кеш EXPIRED: {key}")
-            del cache_store[key]
-    return None
-
-def set_cache(key: str, value: Any):
-    """Сохранить данные в кеш"""
-    cache_store[key] = (value, time.time())
-    logger.debug(f"💾 Кеш SAVED: {key}")
-
-def clear_cache_for_branch(branch_name: str):
-    """Очистить кеш для конкретного филиала"""
-    keys_to_delete = [k for k in cache_store.keys() if branch_name in k]
-    for key in keys_to_delete:
-        del cache_store[key]
-    logger.info(f"🗑️ Очищен кеш для филиала: {branch_name}")
-
-# ============= АВТОРИЗАЦИЯ =============
-
-def get_service_account_info():
-    try:
-        json_str = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON', '{}')
-        if json_str == '{}':
-            logger.error("GOOGLE_SERVICE_ACCOUNT_JSON не установлен")
-            return None
-        info = json.loads(json_str)
-        if 'private_key' in info:
-            info['private_key'] = info['private_key'].replace('\\n', '\n')
-        return info
-    except json.JSONDecodeError as e:
-        logger.error(f"Ошибка парсинга: {e}")
-        return None
-
-SERVICE_ACCOUNT_INFO = get_service_account_info()
-MASTER_SPREADSHEET_ID = os.getenv('GOOGLE_SHEET_ID', '')
+DB_PATH = os.getenv('DB_PATH', '/app/data/barbercrm.db')
 
 BRANCH_GOALS = {
     "morning_events": 16,
@@ -105,71 +56,219 @@ BRANCH_GOALS = {
     "new_employees": 10
 }
 
+# ============= DATABASE =============
+
+def get_db_path():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    return DB_PATH
+
+@contextmanager
+def get_db():
+    conn = sqlite3.connect(get_db_path())
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+def init_db():
+    """Инициализация базы данных"""
+    with get_db() as conn:
+        conn.executescript("""
+        CREATE TABLE IF NOT EXISTS branches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            address TEXT NOT NULL,
+            manager_name TEXT NOT NULL,
+            manager_phone TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            token TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        
+        CREATE TABLE IF NOT EXISTS morning_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch_name TEXT NOT NULL,
+            submitted_at TEXT NOT NULL,
+            date TEXT NOT NULL,
+            week INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            participants INTEGER NOT NULL,
+            efficiency INTEGER NOT NULL,
+            comment TEXT DEFAULT '',
+            FOREIGN KEY (branch_name) REFERENCES branches(name)
+        );
+        
+        CREATE TABLE IF NOT EXISTS field_visits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch_name TEXT NOT NULL,
+            submitted_at TEXT NOT NULL,
+            date TEXT NOT NULL,
+            master_name TEXT NOT NULL,
+            haircut_quality INTEGER NOT NULL,
+            service_quality INTEGER NOT NULL,
+            additional_services_comment TEXT DEFAULT '',
+            additional_services_rating INTEGER NOT NULL,
+            cosmetics_comment TEXT DEFAULT '',
+            cosmetics_rating INTEGER NOT NULL,
+            standards_comment TEXT DEFAULT '',
+            standards_rating INTEGER NOT NULL,
+            errors_comment TEXT DEFAULT '',
+            next_check_date TEXT DEFAULT '',
+            average_rating REAL NOT NULL,
+            FOREIGN KEY (branch_name) REFERENCES branches(name)
+        );
+        
+        CREATE TABLE IF NOT EXISTS one_on_one (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch_name TEXT NOT NULL,
+            submitted_at TEXT NOT NULL,
+            date TEXT NOT NULL,
+            master_name TEXT NOT NULL,
+            goal TEXT NOT NULL,
+            results TEXT NOT NULL,
+            development_plan TEXT NOT NULL,
+            indicator TEXT NOT NULL,
+            next_meeting_date TEXT DEFAULT '',
+            FOREIGN KEY (branch_name) REFERENCES branches(name)
+        );
+        
+        CREATE TABLE IF NOT EXISTS weekly_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch_name TEXT NOT NULL,
+            submitted_at TEXT NOT NULL,
+            period TEXT NOT NULL,
+            average_check_plan REAL NOT NULL,
+            average_check_fact REAL NOT NULL,
+            cosmetics_plan REAL NOT NULL,
+            cosmetics_fact REAL NOT NULL,
+            additional_services_plan REAL NOT NULL,
+            additional_services_fact REAL NOT NULL,
+            FOREIGN KEY (branch_name) REFERENCES branches(name)
+        );
+        
+        CREATE TABLE IF NOT EXISTS master_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch_name TEXT NOT NULL,
+            submitted_at TEXT NOT NULL,
+            month TEXT NOT NULL,
+            master_name TEXT NOT NULL,
+            average_check_plan REAL NOT NULL,
+            average_check_fact REAL NOT NULL,
+            additional_services_plan INTEGER NOT NULL,
+            additional_services_fact INTEGER NOT NULL,
+            sales_plan REAL NOT NULL,
+            sales_fact REAL NOT NULL,
+            salary_plan REAL NOT NULL,
+            salary_fact REAL NOT NULL,
+            FOREIGN KEY (branch_name) REFERENCES branches(name)
+        );
+        
+        CREATE TABLE IF NOT EXISTS reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch_name TEXT NOT NULL,
+            submitted_at TEXT NOT NULL,
+            week TEXT NOT NULL,
+            manager_name TEXT NOT NULL,
+            plan INTEGER NOT NULL DEFAULT 13,
+            fact INTEGER NOT NULL,
+            monthly_target INTEGER NOT NULL DEFAULT 52,
+            FOREIGN KEY (branch_name) REFERENCES branches(name)
+        );
+        
+        CREATE TABLE IF NOT EXISTS newbie_adaptation (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch_name TEXT NOT NULL,
+            submitted_at TEXT NOT NULL,
+            start_date TEXT NOT NULL,
+            name TEXT NOT NULL,
+            haircut_practice TEXT NOT NULL,
+            service_standards TEXT NOT NULL,
+            hygiene_sanitation TEXT NOT NULL,
+            additional_services TEXT NOT NULL,
+            cosmetics_sales TEXT NOT NULL,
+            iclient_basics TEXT NOT NULL,
+            status TEXT NOT NULL,
+            FOREIGN KEY (branch_name) REFERENCES branches(name)
+        );
+        
+        CREATE TABLE IF NOT EXISTS branch_summaries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch_name TEXT NOT NULL,
+            submitted_at TEXT NOT NULL,
+            manager TEXT NOT NULL,
+            month TEXT NOT NULL,
+            metric TEXT NOT NULL,
+            current_value INTEGER NOT NULL,
+            goal_value INTEGER NOT NULL,
+            percentage REAL NOT NULL,
+            FOREIGN KEY (branch_name) REFERENCES branches(name)
+        );
+        
+        CREATE INDEX IF NOT EXISTS idx_morning_events_branch ON morning_events(branch_name);
+        CREATE INDEX IF NOT EXISTS idx_field_visits_branch ON field_visits(branch_name);
+        CREATE INDEX IF NOT EXISTS idx_one_on_one_branch ON one_on_one(branch_name);
+        CREATE INDEX IF NOT EXISTS idx_weekly_metrics_branch ON weekly_metrics(branch_name);
+        CREATE INDEX IF NOT EXISTS idx_master_plans_branch ON master_plans(branch_name);
+        CREATE INDEX IF NOT EXISTS idx_reviews_branch ON reviews(branch_name);
+        CREATE INDEX IF NOT EXISTS idx_newbie_adaptation_branch ON newbie_adaptation(branch_name);
+        CREATE INDEX IF NOT EXISTS idx_branch_summaries_branch ON branch_summaries(branch_name);
+        """)
+    logger.info("✅ База данных инициализирована")
+
+# ============= УТИЛИТЫ =============
+
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 def generate_token() -> str:
     return secrets.token_urlsafe(32)
 
-def get_sheets_client():
-    """
-    Получить клиент для работы с Google Sheets
-    Поддерживает два метода авторизации:
-    1. OAuth (GOOGLE_OAUTH_TOKEN) - для личного Google Drive, не требует биллинга
-    2. Service Account (GOOGLE_SERVICE_ACCOUNT_JSON) - для корпоративного использования
-    """
-    try:
-        oauth_token_str = os.getenv('GOOGLE_OAUTH_TOKEN', None)
-        
-        if oauth_token_str:
-            logger.info("🔐 Используем OAuth авторизацию (личный Google Drive)")
-            
-            from google.oauth2.credentials import Credentials as OAuthCredentials
-            
-            try:
-                token_data = json.loads(oauth_token_str)
-                
-                creds = OAuthCredentials(
-                    token=token_data.get('token'),
-                    refresh_token=token_data.get('refresh_token'),
-                    token_uri=token_data.get('token_uri', 'https://oauth2.googleapis.com/token'),
-                    client_id=token_data.get('client_id'),
-                    client_secret=token_data.get('client_secret'),
-                    scopes=SCOPES
-                )
-                
-                if creds.refresh_token:
-                    from google.auth.transport.requests import Request
-                    logger.info("🔄 Принудительно обновляем OAuth токен...")
-                    creds.refresh(Request())
-                    logger.info("✅ Токен обновлён")
-                
-                return gspread.authorize(creds)
-                
-            except Exception as oauth_error:
-                logger.error(f"❌ Ошибка OAuth авторизации: {oauth_error}")
-                raise HTTPException(
-                    status_code=500, 
-                    detail=f"Ошибка OAuth авторизации. Возможно токен истёк. Запустите get_oauth_token.py для получения нового токена. Ошибка: {str(oauth_error)}"
-                )
-        
-        else:
-            logger.info("🔐 Используем Service Account авторизацию")
-            
-            if not SERVICE_ACCOUNT_INFO:
-                raise HTTPException(
-                    status_code=500, 
-                    detail="Google Sheets не настроен. Укажите GOOGLE_OAUTH_TOKEN или GOOGLE_SERVICE_ACCOUNT_JSON в .env"
-                )
-            
-            creds = Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPES)
-            return gspread.authorize(creds)
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Ошибка авторизации: {e}")
-        raise HTTPException(status_code=500, detail=f"Ошибка авторизации Google: {str(e)}")
+def parse_date_flexible(date_str: str) -> Optional[datetime]:
+    date_str = str(date_str).strip()
+    if not date_str:
+        return None
+    date_part = date_str.split()[0]
+    for fmt in ["%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"]:
+        try:
+            return datetime.strptime(date_part, fmt)
+        except ValueError:
+            continue
+    return None
+
+def get_current_month_ru() -> str:
+    months_ru = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+                 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь']
+    now = datetime.now()
+    return f"{months_ru[now.month - 1]} {now.year}"
+
+def date_to_month_ru(dt: datetime) -> str:
+    months_ru = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+                 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь']
+    return f"{months_ru[dt.month - 1]} {dt.year}"
+
+def count_records_for_month(rows, date_field: str, month: str) -> int:
+    count = 0
+    for row in rows:
+        val = row[date_field] if isinstance(row, dict) else row[date_field]
+        dt = parse_date_flexible(str(val))
+        if dt and date_to_month_ru(dt) == month:
+            count += 1
+    return count
+
+def sum_reviews_for_month(rows, month: str) -> int:
+    total = 0
+    for row in rows:
+        dt = parse_date_flexible(str(row['submitted_at']))
+        if dt and date_to_month_ru(dt) == month:
+            total += int(row['fact'] or 0)
+    return total
 
 # ============= МОДЕЛИ =============
 
@@ -182,6 +281,10 @@ class BranchRegister(BaseModel):
 
 class LoginRequest(BaseModel):
     name: str
+    password: str
+
+class AdminLoginRequest(BaseModel):
+    username: str
     password: str
 
 class MorningEvent(BaseModel):
@@ -197,14 +300,14 @@ class FieldVisit(BaseModel):
     master_name: str
     haircut_quality: int = Field(..., ge=1, le=10)
     service_quality: int = Field(..., ge=1, le=10)
-    additional_services_comment: str
+    additional_services_comment: str = ""
     additional_services_rating: int = Field(..., ge=1, le=10)
-    cosmetics_comment: str
+    cosmetics_comment: str = ""
     cosmetics_rating: int = Field(..., ge=1, le=10)
-    standards_comment: str
+    standards_comment: str = ""
     standards_rating: int = Field(..., ge=1, le=10)
-    errors_comment: str
-    next_check_date: Optional[str] = None
+    errors_comment: str = ""
+    next_check_date: Optional[str] = ""
 
 class OneOnOneMeeting(BaseModel):
     date: str
@@ -213,7 +316,7 @@ class OneOnOneMeeting(BaseModel):
     results: str
     development_plan: str
     indicator: str
-    next_meeting_date: Optional[str] = None
+    next_meeting_date: Optional[str] = ""
 
 class WeeklyMetrics(BaseModel):
     period: str
@@ -258,1299 +361,488 @@ class BranchSummary(BaseModel):
     manager: str
     month: str
 
-# ============= УТИЛИТЫ =============
+class EmailReportRequest(BaseModel):
+    period_type: str
+    custom_date: Optional[str] = None
 
-def create_branch_spreadsheet(client, branch_name: str) -> str:
-    """Создает новую таблицу для филиала и возвращает её ID"""
-    try:
-        folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID', None)
-        oauth_token_str = os.getenv('GOOGLE_OAUTH_TOKEN', None)
-        
-        logger.info(f"🔍 GOOGLE_DRIVE_FOLDER_ID = '{folder_id}'")
-        logger.info(f"🔍 Метод авторизации: {'OAuth' if oauth_token_str else 'Service Account'}")
-        
-        try:
-            logger.info(f"📝 Создаём таблицу через gspread.create()...")
-            spreadsheet = client.create(f"BarberCRM - {branch_name}")
-            spreadsheet_id = spreadsheet.id
-            logger.info(f"✅ Таблица создана! ID: {spreadsheet_id}")
-            
-            if folder_id:
-                try:
-                    from googleapiclient.discovery import build
-                    auth = client.auth
-                    
-                    logger.info(f"📁 Перемещаем файл в папку: {folder_id}")
-                    drive_service = build('drive', 'v3', credentials=auth)
-                    
-                    file_obj = drive_service.files().get(
-                        fileId=spreadsheet_id,
-                        fields='parents'
-                    ).execute()
-                    
-                    previous_parents = ",".join(file_obj.get('parents', []))
-                    
-                    drive_service.files().update(
-                        fileId=spreadsheet_id,
-                        addParents=folder_id,
-                        removeParents=previous_parents,
-                        fields='id, parents'
-                    ).execute()
-                    
-                    logger.info(f"✅ Файл перемещён в папку!")
-                    
-                except Exception as move_error:
-                    logger.warning(f"⚠️ Не удалось переместить файл в папку: {move_error}")
-            
-            return spreadsheet_id
-            
-        except Exception as create_error:
-            logger.error(f"❌ Ошибка создания таблицы: {create_error}")
-            raise HTTPException(status_code=500, detail=f"Не удалось создать таблицу: {str(create_error)}")
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Ошибка в create_branch_spreadsheet: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# ============= STARTUP =============
 
-def get_branch_spreadsheet_id(client, branch_name: str) -> str:
-    """Получает ID таблицы филиала из главной таблицы"""
-    cache_key = f"spreadsheet_id_{branch_name}"
-    cached = get_from_cache(cache_key)
-    if cached:
-        # ВАЖНО: НЕ проверяем таблицу здесь - это лишний API запрос!
-        # Проверка будет при первом использовании
-        return cached
-    
-    try:
-        spreadsheet = client.open_by_key(MASTER_SPREADSHEET_ID)
-        worksheet = spreadsheet.worksheet("Филиалы")
-        records = worksheet.get_all_records()
-        
-        for record in records:
-            if record.get('Название') == branch_name:
-                # Пробуем разные варианты названия колонки
-                sheet_id = (record.get('ID таблицы', '') or 
-                           record.get('Spreadsheet ID', '') or
-                           record.get('ID Таблицы', ''))
-                
-                if not sheet_id:
-                    raise HTTPException(
-                        status_code=500, 
-                        detail=f"ID таблицы для филиала '{branch_name}' пуст"
-                    )
-                
-                # Проверяем что таблица существует
-                try:
-                    client.open_by_key(sheet_id)
-                    set_cache(cache_key, sheet_id)
-                    logger.info(f"✅ ID таблицы для '{branch_name}': {sheet_id}")
-                    return sheet_id
-                except gspread.exceptions.SpreadsheetNotFound:
-                    raise HTTPException(
-                        status_code=404, 
-                        detail=f"Таблица {sheet_id} не найдена. Возможно она была удалена."
-                    )
-        
-        raise HTTPException(status_code=404, detail=f"Филиал '{branch_name}' не найден в главной таблице")
-    except gspread.exceptions.WorksheetNotFound:
-        raise HTTPException(status_code=500, detail="Лист 'Филиалы' не найден в главной таблице")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Ошибка получения ID таблицы: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-def ensure_sheet_exists(client, spreadsheet_id: str, sheet_name: str, headers: List[str]):
-    """Проверяет существование листа, создаёт если нужно"""
-    try:
-        try:
-            spreadsheet = client.open_by_key(spreadsheet_id)
-        except gspread.exceptions.SpreadsheetNotFound:
-            logger.error(f"❌ Таблица {spreadsheet_id} не найдена")
-            raise HTTPException(
-                status_code=404,
-                detail="Таблица филиала не найдена. Пожалуйста, обратитесь к администратору."
-            )
-        
-        try:
-            worksheet = spreadsheet.worksheet(sheet_name)
-            # ИСПРАВЛЕНИЕ: Проверяем и исправляем заголовки
-            existing_headers = worksheet.row_values(1)
-            if not existing_headers or existing_headers != headers:
-                logger.warning(f"⚠️ Исправляем заголовки листа '{sheet_name}'")
-                # Удаляем все строки и создаем правильные заголовки
-                worksheet.clear()
-                worksheet.append_row(headers)
-                logger.info(f"✅ Заголовки обновлены: {headers}")
-        except gspread.exceptions.WorksheetNotFound:
-            logger.info(f"📝 Создание листа: {sheet_name}")
-            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=1000, cols=len(headers))
-            worksheet.append_row(headers)
-            logger.info(f"✅ Создан лист с заголовками: {headers}")
-            return worksheet
-        
-        return worksheet
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Ошибка ensure_sheet_exists: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-def insert_row_at_top(worksheet, data: List[Any]):
-    """Конвертируем все значения в строки/числа и вставляем"""
-    try:
-        converted_data = []
-        for item in data:
-            if item is None:
-                converted_data.append("")
-            elif isinstance(item, (int, float)):
-                converted_data.append(item)
-            else:
-                converted_data.append(str(item))
-        
-        worksheet.insert_row(converted_data, index=2)
-        logger.info(f"✅ Данные добавлены: {converted_data[:3]}...")
-    except Exception as e:
-        logger.error(f"Ошибка вставки: {e}")
-        raise HTTPException(status_code=500, detail=f"Ошибка записи: {str(e)}")
-
-def get_branch_by_name(client, name: str) -> Optional[Dict]:
-    """Получить данные филиала по имени"""
-    cache_key = f"branch_{name}"
-    cached = get_from_cache(cache_key)
-    if cached:
-        return cached
-    
-    try:
-        spreadsheet = client.open_by_key(MASTER_SPREADSHEET_ID)
-        worksheet = spreadsheet.worksheet("Филиалы")
-        records = worksheet.get_all_records()
-        for record in records:
-            if record.get('Название') == name:
-                set_cache(cache_key, record)
-                return record
-        return None
-    except:
-        return None
-
-def get_all_sheet_data_batch(client, spreadsheet_id: str, sheet_names: List[str]) -> Dict[str, List[Dict]]:
-    """
-    ОПТИМИЗАЦИЯ: Получает данные из ВСЕХ листов за ОДИН вызов spreadsheet.get()
-    Вместо 7 запросов делаем 1 запрос
-    """
-    cache_key = f"all_data_{spreadsheet_id}"
-    cached = get_from_cache(cache_key)
-    if cached:
-        return cached
-    
-    try:
-        # Проверяем что таблица существует
-        try:
-            spreadsheet = client.open_by_key(spreadsheet_id)
-        except gspread.exceptions.SpreadsheetNotFound:
-            logger.error(f"❌ Таблица {spreadsheet_id} не найдена")
-            raise HTTPException(
-                status_code=404,
-                detail=f"Таблица не найдена. Возможно она была удалена из Google Drive."
-            )
-        
-        result = {}
-        
-        # Получаем все листы одним запросом
-        all_worksheets = spreadsheet.worksheets()
-        worksheet_dict = {ws.title: ws for ws in all_worksheets}
-        
-        for sheet_name in sheet_names:
-            if sheet_name in worksheet_dict:
-                try:
-                    records = worksheet_dict[sheet_name].get_all_records()
-                    result[sheet_name] = records
-                    logger.info(f"📊 Получено {len(records)} записей из '{sheet_name}'")
-                except Exception as e:
-                    logger.warning(f"⚠️ Ошибка чтения '{sheet_name}': {e}")
-                    result[sheet_name] = []
-            else:
-                logger.info(f"ℹ️ Лист '{sheet_name}' не существует, будет создан при первой записи")
-                result[sheet_name] = []
-        
-        set_cache(cache_key, result)
-        return result
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Ошибка batch-загрузки: {e}")
-        # Возвращаем пустые данные вместо ошибки
-        return {name: [] for name in sheet_names}
-
-def count_records_for_month_from_data(records: List[Dict], month: str) -> int:
-    """Подсчитывает количество записей за месяц из уже загруженных данных (БЕЗ запроса к API)"""
-    count = 0
-    for record in records:
-        record_date = record.get('Дата отправки', '') or record.get('Дата', '')
-        if record_date:
-            date_obj = parse_date_flexible(str(record_date))
-            if date_obj:
-                try:
-                    record_month = date_obj.strftime("%B %Y")
-                    
-                    months_ru = {
-                        'January': 'Январь', 'February': 'Февраль', 'March': 'Март',
-                        'April': 'Апрель', 'May': 'Май', 'June': 'Июнь',
-                        'July': 'Июль', 'August': 'Август', 'September': 'Сентябрь',
-                        'October': 'Октябрь', 'November': 'Ноябрь', 'December': 'Декабрь'
-                    }
-                    
-                    month_en = record_month.split()[0]
-                    year = record_month.split()[1]
-                    record_month_ru = f"{months_ru.get(month_en, month_en)} {year}"
-                    
-                    if record_month_ru == month:
-                        count += 1
-                except:
-                    continue
-    
-    return count
-
-def sum_reviews_for_month_from_data(records: List[Dict], month: str) -> int:
-    """Подсчитывает СУММУ отзывов (факт) за месяц"""
-    total = 0
-    for record in records:
-        record_date = record.get('Дата отправки', '')
-        if record_date:
-            date_obj = parse_date_flexible(str(record_date))
-            if date_obj:
-                try:
-                    record_month = date_obj.strftime("%B %Y")
-                    
-                    months_ru = {
-                        'January': 'Январь', 'February': 'Февраль', 'March': 'Март',
-                        'April': 'Апрель', 'May': 'Май', 'June': 'Июнь',
-                        'July': 'Июль', 'August': 'Август', 'September': 'Сентябрь',
-                        'October': 'Октябрь', 'November': 'Ноябрь', 'December': 'Декабрь'
-                    }
-                    
-                    month_en = record_month.split()[0]
-                    year = record_month.split()[1]
-                    record_month_ru = f"{months_ru.get(month_en, month_en)} {year}"
-                    
-                    if record_month_ru == month:
-                        # Суммируем факт отзывов
-                        fact = record.get('Факт', 0) or record.get('Факт отзывов', 0)
-                        try:
-                            total += int(fact)
-                        except:
-                            continue
-                except:
-                    continue
-    
-    return total
+@app.on_event("startup")
+def startup():
+    init_db()
+    logger.info("🚀 BarberCRM v5.0.0 запущен (SQLite)")
 
 # ============= ЭНДПОИНТЫ =============
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy", "version": "4.3.0", "cache_enabled": True, "cache_ttl": CACHE_TTL}
+    return {"status": "healthy", "version": "5.0.0", "storage": "SQLite"}
 
-@app.get("/branches")
-def get_branches():
-    """Список всех филиалов (названия). Используется Telegram-ботом."""
-    cache_key = "all_branches_list"
-    cached = get_from_cache(cache_key)
-    if cached:
-        return cached
-
-    try:
-        client = get_sheets_client()
-        spreadsheet = client.open_by_key(MASTER_SPREADSHEET_ID)
-        worksheet = spreadsheet.worksheet("Филиалы")
-        records = worksheet.get_all_records()
-        names = [r.get("Название", "") for r in records if r.get("Название")]
-        result = {"success": True, "branches": names}
-        set_cache(cache_key, result)
-        return result
-    except Exception as e:
-        logger.error(f"Ошибка получения списка филиалов: {e}")
-        return {"success": False, "branches": [], "error": str(e)}
-
-@app.get("/api/cache-stats")
-def get_cache_stats():
-    """Статистика кеша"""
-    current_time = time.time()
-    items = []
-    
-    for key, (value, timestamp) in cache_store.items():
-        age = int(current_time - timestamp)
-        remaining = int(CACHE_TTL - age)
-        items.append({
-            "key": key,
-            "age_seconds": age,
-            "remaining_seconds": max(0, remaining),
-            "expired": age >= CACHE_TTL
-        })
-    
-    return {
-        "cache_size": len(cache_store),
-        "ttl_seconds": CACHE_TTL,
-        "items": items
-    }
-
-@app.post("/api/cache-clear")
-def clear_cache():
-    """Очистка всего кеша"""
-    cache_store.clear()
-    logger.info("🗑️ Весь кеш очищен вручную")
-    return {"success": True, "message": "Кеш очищен"}
-
-@app.post("/api/cache-clear/{branch_name}")
-def clear_branch_cache(branch_name: str):
-    """Очистка кеша конкретного филиала"""
-    clear_cache_for_branch(branch_name)
-    return {"success": True, "message": f"Кеш для '{branch_name}' очищен"}
+# ============= АВТОРИЗАЦИЯ =============
 
 @app.post("/register")
 def register_branch(branch: BranchRegister):
-    """Регистрация нового филиала"""
-    try:
-        client = get_sheets_client()
-        
-        if not MASTER_SPREADSHEET_ID:
-            raise HTTPException(status_code=500, detail="GOOGLE_SHEET_ID не настроен в .env")
-        
-        spreadsheet = client.open_by_key(MASTER_SPREADSHEET_ID)
-        
-        try:
-            worksheet = spreadsheet.worksheet("Филиалы")
-        except gspread.exceptions.WorksheetNotFound:
-            worksheet = spreadsheet.add_worksheet(title="Филиалы", rows=100, cols=10)
-            worksheet.append_row([
-                "Название", "Адрес", "Имя руководителя", "Телефон", 
-                "Пароль (хеш)", "Токен", "ID таблицы", "Дата регистрации"
-            ])
-        
-        existing = get_branch_by_name(client, branch.name)
+    with get_db() as conn:
+        existing = conn.execute("SELECT id FROM branches WHERE name = ?", (branch.name,)).fetchone()
         if existing:
             raise HTTPException(status_code=400, detail="Филиал с таким названием уже существует")
         
-        branch_spreadsheet_id = create_branch_spreadsheet(client, branch.name)
-        
-        password_hash = hash_password(branch.password)
         token = generate_token()
-        registration_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        worksheet.append_row([
-            branch.name,
-            branch.address,
-            branch.manager_name,
-            branch.manager_phone,
-            password_hash,
-            token,
-            branch_spreadsheet_id,
-            registration_date
-        ])
-        
-        logger.info(f"✅ Таблица для филиала '{branch.name}' создана успешно!")
-        
-        # Очищаем кеш
-        clear_cache_for_branch(branch.name)
-        
-        return {
-            "success": True,
-            "message": "Филиал успешно зарегистрирован",
-            "token": token,
-            "branch_name": branch.name
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Ошибка регистрации: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        conn.execute(
+            "INSERT INTO branches (name, address, manager_name, manager_phone, password_hash, token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (branch.name, branch.address, branch.manager_name, branch.manager_phone,
+             hash_password(branch.password), token, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        )
+    
+    return {"success": True, "message": "Филиал успешно зарегистрирован", "token": token, "branch_name": branch.name}
 
 @app.post("/login")
 def login(request: LoginRequest):
-    """Авторизация филиала"""
-    try:
-        client = get_sheets_client()
-        branch = get_branch_by_name(client, request.name)
-        
+    with get_db() as conn:
+        branch = conn.execute("SELECT * FROM branches WHERE name = ?", (request.name,)).fetchone()
         if not branch:
             raise HTTPException(status_code=401, detail="Неверное название филиала")
-        
-        password_hash = hash_password(request.password)
-        
-        if branch.get('Пароль (хеш)') != password_hash:
+        if branch['password_hash'] != hash_password(request.password):
             raise HTTPException(status_code=401, detail="Неверный пароль")
         
         return {
             "success": True,
-            "token": branch.get('Токен'),
-            "branch": {
-                "name": request.name,
-                "manager": branch.get('Имя руководителя')
-            }
+            "token": branch['token'],
+            "branch": {"name": request.name, "manager": branch['manager_name']}
         }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Ошибка авторизации: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/admin/login")
+def admin_login(request: AdminLoginRequest):
+    if request.username != ADMIN_USERNAME:
+        raise HTTPException(status_code=401, detail="Неверный логин")
+    if hash_password(request.password) != ADMIN_PASSWORD_HASH:
+        raise HTTPException(status_code=401, detail="Неверный пароль")
+    
+    admin_token = generate_token()
+    return {
+        "success": True,
+        "token": admin_token,
+        "role": "admin"
+    }
+
+@app.get("/branches")
+def get_branches():
+    with get_db() as conn:
+        rows = conn.execute("SELECT name FROM branches ORDER BY name").fetchall()
+        return {"success": True, "branches": [r['name'] for r in rows]}
+
+@app.get("/branches/details")
+def get_branches_details():
+    """Для админки — список филиалов с деталями"""
+    with get_db() as conn:
+        rows = conn.execute("SELECT name, address, manager_name, manager_phone, created_at FROM branches ORDER BY name").fetchall()
+        return {
+            "success": True,
+            "branches": [dict(r) for r in rows]
+        }
+
+# ============= ДАШБОРД =============
 
 @app.get("/dashboard-summary/{branch_name}")
 def get_dashboard_summary(branch_name: str):
-    """
-    ОПТИМИЗИРОВАННАЯ ВЕРСИЯ: загружает ВСЕ данные ОДНИМ batch-запросом
-    Вместо 7+ отдельных запросов к API
-    """
-    try:
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
+    current_month = get_current_month_ru()
+    
+    with get_db() as conn:
+        # Проверяем что филиал существует
+        branch = conn.execute("SELECT id FROM branches WHERE name = ?", (branch_name,)).fetchone()
+        if not branch:
+            raise HTTPException(status_code=404, detail=f"Филиал '{branch_name}' не найден")
         
-        # Текущий месяц
-        now = datetime.now()
-        months_ru = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 
-                     'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь']
-        current_month = f"{months_ru[now.month - 1]} {now.year}"
-        
-        # ОПТИМИЗАЦИЯ: Получаем ВСЕ листы одним запросом
-        sheet_names = [
-            "Утренние мероприятия",
-            "Полевые выходы",
-            "One-on-One",
-            "Планы мастеров",
-            "Еженедельные показатели",
-            "Отзывы",
-            "Адаптация новичков"
-        ]
-        
-        all_data = get_all_sheet_data_batch(client, spreadsheet_id, sheet_names)
-        
-        # Подсчитываем из уже загруженных данных (БЕЗ дополнительных запросов)
-        summary = {
-            "morning_events": {
-                "current": count_records_for_month_from_data(all_data.get("Утренние мероприятия", []), current_month),
-                "goal": BRANCH_GOALS["morning_events"],
-                "percentage": 0,
-                "label": "Утренние мероприятия"
-            },
-            "field_visits": {
-                "current": count_records_for_month_from_data(all_data.get("Полевые выходы", []), current_month),
-                "goal": BRANCH_GOALS["field_visits"],
-                "percentage": 0,
-                "label": "Полевые выходы"
-            },
-            "one_on_one": {
-                "current": count_records_for_month_from_data(all_data.get("One-on-One", []), current_month),
-                "goal": BRANCH_GOALS["one_on_one"],
-                "percentage": 0,
-                "label": "One-on-One"
-            },
-            "master_plans": {
-                "current": count_records_for_month_from_data(all_data.get("Планы мастеров", []), current_month),
-                "goal": BRANCH_GOALS["master_plans"],
-                "percentage": 0,
-                "label": "Планы мастеров"
-            },
-            "weekly_reports": {
-                "current": count_records_for_month_from_data(all_data.get("Еженедельные показатели", []), current_month),
-                "goal": BRANCH_GOALS["weekly_reports"],
-                "percentage": 0,
-                "label": "Еженедельные отчёты"
-            },
-            "reviews": {
-                "current": sum_reviews_for_month_from_data(all_data.get("Отзывы", []), current_month),
-                "goal": BRANCH_GOALS["reviews"],
-                "percentage": 0,
-                "label": "Отзывы"
-            },
-            "new_employees": {
-                "current": count_records_for_month_from_data(all_data.get("Адаптация новичков", []), current_month),
-                "goal": BRANCH_GOALS["new_employees"],
-                "percentage": 0,
-                "label": "Новые сотрудники"
-            }
-        }
-        
-        # Рассчитываем проценты
-        for key in summary:
-            if summary[key]["goal"] > 0:
-                summary[key]["percentage"] = round((summary[key]["current"] / summary[key]["goal"]) * 100, 1)
-        
-        return {"success": True, "summary": summary}
-    except Exception as e:
-        logger.error(f"Ошибка загрузки дашборда: {e}")
-        return {"success": False, "error": str(e)}
+        me_rows = conn.execute("SELECT submitted_at FROM morning_events WHERE branch_name = ?", (branch_name,)).fetchall()
+        fv_rows = conn.execute("SELECT submitted_at FROM field_visits WHERE branch_name = ?", (branch_name,)).fetchall()
+        oo_rows = conn.execute("SELECT submitted_at FROM one_on_one WHERE branch_name = ?", (branch_name,)).fetchall()
+        mp_rows = conn.execute("SELECT submitted_at FROM master_plans WHERE branch_name = ?", (branch_name,)).fetchall()
+        wm_rows = conn.execute("SELECT submitted_at FROM weekly_metrics WHERE branch_name = ?", (branch_name,)).fetchall()
+        rv_rows = conn.execute("SELECT submitted_at, fact FROM reviews WHERE branch_name = ?", (branch_name,)).fetchall()
+        na_rows = conn.execute("SELECT submitted_at FROM newbie_adaptation WHERE branch_name = ?", (branch_name,)).fetchall()
+    
+    summary = {
+        "morning_events": {"current": count_records_for_month(me_rows, 'submitted_at', current_month), "goal": BRANCH_GOALS["morning_events"], "percentage": 0, "label": "Утренние мероприятия"},
+        "field_visits": {"current": count_records_for_month(fv_rows, 'submitted_at', current_month), "goal": BRANCH_GOALS["field_visits"], "percentage": 0, "label": "Полевые выходы"},
+        "one_on_one": {"current": count_records_for_month(oo_rows, 'submitted_at', current_month), "goal": BRANCH_GOALS["one_on_one"], "percentage": 0, "label": "One-on-One"},
+        "master_plans": {"current": count_records_for_month(mp_rows, 'submitted_at', current_month), "goal": BRANCH_GOALS["master_plans"], "percentage": 0, "label": "Планы мастеров"},
+        "weekly_reports": {"current": count_records_for_month(wm_rows, 'submitted_at', current_month), "goal": BRANCH_GOALS["weekly_reports"], "percentage": 0, "label": "Еженедельные отчёты"},
+        "reviews": {"current": sum_reviews_for_month(rv_rows, current_month), "goal": BRANCH_GOALS["reviews"], "percentage": 0, "label": "Отзывы"},
+        "new_employees": {"current": count_records_for_month(na_rows, 'submitted_at', current_month), "goal": BRANCH_GOALS["new_employees"], "percentage": 0, "label": "Новые сотрудники"},
+    }
+    
+    for key in summary:
+        if summary[key]["goal"] > 0:
+            summary[key]["percentage"] = round((summary[key]["current"] / summary[key]["goal"]) * 100, 1)
+    
+    return {"success": True, "summary": summary}
 
 # ============= УТРЕННИЕ МЕРОПРИЯТИЯ =============
 
 @app.post("/morning-events/{branch_name}")
 def submit_morning_events(branch_name: str, events: List[MorningEvent]):
-    """Добавление утренних мероприятий"""
-    try:
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
-        
-        sheet_name = "Утренние мероприятия"
-        headers = ["Дата отправки", "Дата", "Неделя", "Тип мероприятия", "Участники", "Эффективность", "Комментарий"]
-        worksheet = ensure_sheet_exists(client, spreadsheet_id, sheet_name, headers)
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
         for event in events:
-            row = [
-                timestamp,
-                str(event.date),
-                int(event.week),
-                str(event.event_type),
-                int(event.participants),
-                int(event.efficiency),
-                str(event.comment)
-            ]
-            insert_row_at_top(worksheet, row)
-        
-        # Очищаем кеш для этого филиала
-        clear_cache_for_branch(branch_name)
-        
-        return {"success": True, "message": f"Добавлено {len(events)} мероприятий"}
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+            conn.execute(
+                "INSERT INTO morning_events (branch_name, submitted_at, date, week, event_type, participants, efficiency, comment) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (branch_name, timestamp, event.date, event.week, event.event_type, event.participants, event.efficiency, event.comment or "")
+            )
+    return {"success": True, "message": f"Добавлено {len(events)} мероприятий"}
 
 @app.get("/morning-events/{branch_name}")
 def get_morning_events(branch_name: str):
-    """Получение списка утренних мероприятий (с кешированием)"""
-    cache_key = f"morning_events_{branch_name}"
-    cached = get_from_cache(cache_key)
-    if cached:
-        return cached
-    
-    try:
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
-        spreadsheet = client.open_by_key(spreadsheet_id)
-        worksheet = spreadsheet.worksheet("Утренние мероприятия")
-        data = worksheet.get_all_records()
-        
-        result = {"success": True, "data": data}
-        set_cache(cache_key, result)
-        return result
-    except:
-        return {"success": True, "data": []}
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT submitted_at as 'Дата отправки', date as 'Дата', week as 'Неделя', event_type as 'Тип мероприятия', participants as 'Участники', efficiency as 'Эффективность', comment as 'Комментарий' FROM morning_events WHERE branch_name = ? ORDER BY id DESC",
+            (branch_name,)
+        ).fetchall()
+    return {"success": True, "data": [dict(r) for r in rows]}
 
 # ============= ПОЛЕВЫЕ ВЫХОДЫ =============
 
 @app.post("/field-visits/{branch_name}")
 def submit_field_visits(branch_name: str, visits: List[FieldVisit]):
-    """Добавление полевых выходов"""
-    try:
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
-        
-        sheet_name = "Полевые выходы"
-        headers = [
-            "Дата отправки", "Дата", "Имя мастера", "Качество стрижки", "Качество обслуживания",
-            "Доп. услуги (комм.)", "Доп. услуги (оценка)", "Косметика (комм.)", 
-            "Косметика (оценка)", "Стандарты (комм.)", "Стандарты (оценка)", 
-            "Ошибки", "Дата след. проверки", "Общая оценка"
-        ]
-        worksheet = ensure_sheet_exists(client, spreadsheet_id, sheet_name, headers)
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
         for visit in visits:
-            # Вычисляем среднюю оценку из 5 критериев
-            avg_rating = round((
-                visit.haircut_quality + 
-                visit.service_quality + 
-                visit.additional_services_rating + 
-                visit.cosmetics_rating + 
-                visit.standards_rating
-            ) / 5, 1)
-            
-            row = [
-                timestamp,
-                str(visit.date),
-                str(visit.master_name),
-                int(visit.haircut_quality),
-                int(visit.service_quality),
-                str(visit.additional_services_comment),
-                int(visit.additional_services_rating),
-                str(visit.cosmetics_comment),
-                int(visit.cosmetics_rating),
-                str(visit.standards_comment),
-                int(visit.standards_rating),
-                str(visit.errors_comment),
-                str(visit.next_check_date) if visit.next_check_date else "",
-                avg_rating  # Общая оценка
-            ]
-            insert_row_at_top(worksheet, row)
-        
-        clear_cache_for_branch(branch_name)
-        
-        return {"success": True, "message": f"Добавлено {len(visits)} посещений"}
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+            avg = round((visit.haircut_quality + visit.service_quality + visit.additional_services_rating + visit.cosmetics_rating + visit.standards_rating) / 5, 1)
+            conn.execute(
+                "INSERT INTO field_visits (branch_name, submitted_at, date, master_name, haircut_quality, service_quality, additional_services_comment, additional_services_rating, cosmetics_comment, cosmetics_rating, standards_comment, standards_rating, errors_comment, next_check_date, average_rating) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (branch_name, timestamp, visit.date, visit.master_name, visit.haircut_quality, visit.service_quality,
+                 visit.additional_services_comment, visit.additional_services_rating, visit.cosmetics_comment,
+                 visit.cosmetics_rating, visit.standards_comment, visit.standards_rating, visit.errors_comment,
+                 visit.next_check_date or "", avg)
+            )
+    return {"success": True, "message": f"Добавлено {len(visits)} посещений"}
 
 @app.get("/field-visits/{branch_name}")
 def get_field_visits(branch_name: str):
-    """Получение списка полевых выходов (с кешированием)"""
-    cache_key = f"field_visits_{branch_name}"
-    cached = get_from_cache(cache_key)
-    if cached:
-        return cached
-    
-    try:
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
-        spreadsheet = client.open_by_key(spreadsheet_id)
-        worksheet = spreadsheet.worksheet("Полевые выходы")
-        data = worksheet.get_all_records()
-        
-        result = {"success": True, "data": data}
-        set_cache(cache_key, result)
-        return result
-    except:
-        return {"success": True, "data": []}
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT submitted_at as 'Дата отправки', date as 'Дата', master_name as 'Имя мастера', haircut_quality as 'Качество стрижки', service_quality as 'Качество обслуживания', additional_services_comment as 'Доп. услуги (комм.)', additional_services_rating as 'Доп. услуги (оценка)', cosmetics_comment as 'Косметика (комм.)', cosmetics_rating as 'Косметика (оценка)', standards_comment as 'Стандарты (комм.)', standards_rating as 'Стандарты (оценка)', errors_comment as 'Ошибки', next_check_date as 'Дата след. проверки', average_rating as 'Общая оценка' FROM field_visits WHERE branch_name = ? ORDER BY id DESC",
+            (branch_name,)
+        ).fetchall()
+    return {"success": True, "data": [dict(r) for r in rows]}
 
 # ============= ONE-ON-ONE =============
 
 @app.post("/one-on-one/{branch_name}")
 def submit_one_on_one(branch_name: str, meetings: List[OneOnOneMeeting]):
-    """Добавление one-on-one встреч"""
-    try:
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
-        
-        sheet_name = "One-on-One"
-        headers = [
-            "Дата отправки", "Дата", "Имя мастера", "Цель", "Результаты", 
-            "План развития", "Показатель", "Дата след. встречи"
-        ]
-        worksheet = ensure_sheet_exists(client, spreadsheet_id, sheet_name, headers)
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        for meeting in meetings:
-            row = [
-                timestamp,
-                str(meeting.date),
-                str(meeting.master_name),
-                str(meeting.goal),
-                str(meeting.results),
-                str(meeting.development_plan),
-                str(meeting.indicator),
-                str(meeting.next_meeting_date) if meeting.next_meeting_date else ""
-            ]
-            insert_row_at_top(worksheet, row)
-        
-        clear_cache_for_branch(branch_name)
-        
-        return {"success": True, "message": f"Добавлено {len(meetings)} встреч"}
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
+        for m in meetings:
+            conn.execute(
+                "INSERT INTO one_on_one (branch_name, submitted_at, date, master_name, goal, results, development_plan, indicator, next_meeting_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (branch_name, timestamp, m.date, m.master_name, m.goal, m.results, m.development_plan, m.indicator, m.next_meeting_date or "")
+            )
+    return {"success": True, "message": f"Добавлено {len(meetings)} встреч"}
 
 @app.get("/one-on-one/{branch_name}")
 def get_one_on_one(branch_name: str):
-    """Получение списка one-on-one встреч (с кешированием)"""
-    cache_key = f"one_on_one_{branch_name}"
-    cached = get_from_cache(cache_key)
-    if cached:
-        return cached
-    
-    try:
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
-        spreadsheet = client.open_by_key(spreadsheet_id)
-        worksheet = spreadsheet.worksheet("One-on-One")
-        data = worksheet.get_all_records()
-        
-        result = {"success": True, "data": data}
-        set_cache(cache_key, result)
-        return result
-    except:
-        return {"success": True, "data": []}
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT submitted_at as 'Дата отправки', date as 'Дата', master_name as 'Имя мастера', goal as 'Цель', results as 'Результаты', development_plan as 'План развития', indicator as 'Показатель', next_meeting_date as 'Дата след. встречи' FROM one_on_one WHERE branch_name = ? ORDER BY id DESC",
+            (branch_name,)
+        ).fetchall()
+    return {"success": True, "data": [dict(r) for r in rows]}
 
 # ============= ЕЖЕНЕДЕЛЬНЫЕ ПОКАЗАТЕЛИ =============
 
 @app.post("/weekly-metrics/{branch_name}")
 def submit_weekly_metrics(branch_name: str, metrics: List[WeeklyMetrics]):
-    """Добавление еженедельных показателей"""
-    try:
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
-        
-        sheet_name = "Еженедельные показатели"
-        headers = [
-            "Дата отправки", "Период", "Средний чек (план)", "Средний чек (факт)",
-            "Косметика (план)", "Косметика (факт)", "Доп. услуги (план)", "Доп. услуги (факт)"
-        ]
-        worksheet = ensure_sheet_exists(client, spreadsheet_id, sheet_name, headers)
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        for metric in metrics:
-            row = [
-                timestamp,
-                str(metric.period),
-                float(metric.average_check_plan),
-                float(metric.average_check_fact),
-                float(metric.cosmetics_plan),
-                float(metric.cosmetics_fact),
-                float(metric.additional_services_plan),
-                float(metric.additional_services_fact)
-            ]
-            insert_row_at_top(worksheet, row)
-        
-        clear_cache_for_branch(branch_name)
-        
-        return {"success": True, "message": f"Добавлено {len(metrics)} показателей"}
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
+        for m in metrics:
+            conn.execute(
+                "INSERT INTO weekly_metrics (branch_name, submitted_at, period, average_check_plan, average_check_fact, cosmetics_plan, cosmetics_fact, additional_services_plan, additional_services_fact) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (branch_name, timestamp, m.period, m.average_check_plan, m.average_check_fact, m.cosmetics_plan, m.cosmetics_fact, m.additional_services_plan, m.additional_services_fact)
+            )
+    return {"success": True, "message": f"Добавлено {len(metrics)} показателей"}
 
 @app.get("/weekly-metrics/{branch_name}")
 def get_weekly_metrics(branch_name: str):
-    """Получение еженедельных показателей (с кешированием)"""
-    cache_key = f"weekly_metrics_{branch_name}"
-    cached = get_from_cache(cache_key)
-    if cached:
-        return cached
-    
-    try:
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
-        spreadsheet = client.open_by_key(spreadsheet_id)
-        worksheet = spreadsheet.worksheet("Еженедельные показатели")
-        data = worksheet.get_all_records()
-        
-        result = {"success": True, "data": data}
-        set_cache(cache_key, result)
-        return result
-    except:
-        return {"success": True, "data": []}
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT submitted_at as 'Дата отправки', period as 'Период', average_check_plan as 'Средний чек (план)', average_check_fact as 'Средний чек (факт)', cosmetics_plan as 'Косметика (план)', cosmetics_fact as 'Косметика (факт)', additional_services_plan as 'Доп. услуги (план)', additional_services_fact as 'Доп. услуги (факт)' FROM weekly_metrics WHERE branch_name = ? ORDER BY id DESC",
+            (branch_name,)
+        ).fetchall()
+    return {"success": True, "data": [dict(r) for r in rows]}
 
 # ============= АДАПТАЦИЯ НОВИЧКОВ =============
 
 @app.post("/newbie-adaptation/{branch_name}")
 def submit_newbie_adaptation(branch_name: str, newbies: List[NewbieAdaptation]):
-    """Добавление данных адаптации новичков"""
-    try:
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
-        
-        sheet_name = "Адаптация новичков"
-        headers = [
-            "Дата отправки", "Дата начала", "Имя", "Практика стрижки", 
-            "Стандарты обслуживания", "Гигиена/санитария", "Доп. услуги",
-            "Продажи косметики", "Основы iClient", "Статус"
-        ]
-        worksheet = ensure_sheet_exists(client, spreadsheet_id, sheet_name, headers)
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        for newbie in newbies:
-            row = [
-                timestamp,
-                str(newbie.start_date),
-                str(newbie.name),
-                str(newbie.haircut_practice),
-                str(newbie.service_standards),
-                str(newbie.hygiene_sanitation),
-                str(newbie.additional_services),
-                str(newbie.cosmetics_sales),
-                str(newbie.iclient_basics),
-                str(newbie.status)
-            ]
-            insert_row_at_top(worksheet, row)
-        
-        clear_cache_for_branch(branch_name)
-        
-        return {"success": True, "message": f"Добавлено {len(newbies)} записей"}
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
+        for n in newbies:
+            conn.execute(
+                "INSERT INTO newbie_adaptation (branch_name, submitted_at, start_date, name, haircut_practice, service_standards, hygiene_sanitation, additional_services, cosmetics_sales, iclient_basics, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (branch_name, timestamp, n.start_date, n.name, n.haircut_practice, n.service_standards, n.hygiene_sanitation, n.additional_services, n.cosmetics_sales, n.iclient_basics, n.status)
+            )
+    return {"success": True, "message": f"Добавлено {len(newbies)} записей"}
 
 @app.get("/newbie-adaptation/{branch_name}")
 def get_newbie_adaptation(branch_name: str):
-    """Получение списка адаптации новичков (с кешированием)"""
-    cache_key = f"newbie_adaptation_{branch_name}"
-    cached = get_from_cache(cache_key)
-    if cached:
-        return cached
-    
-    try:
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
-        spreadsheet = client.open_by_key(spreadsheet_id)
-        worksheet = spreadsheet.worksheet("Адаптация новичков")
-        data = worksheet.get_all_records()
-        
-        result = {"success": True, "data": data}
-        set_cache(cache_key, result)
-        return result
-    except:
-        return {"success": True, "data": []}
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT submitted_at as 'Дата отправки', start_date as 'Дата начала', name as 'Имя', haircut_practice as 'Практика стрижки', service_standards as 'Стандарты обслуживания', hygiene_sanitation as 'Гигиена/санитария', additional_services as 'Доп. услуги', cosmetics_sales as 'Продажи косметики', iclient_basics as 'Основы iClient', status as 'Статус' FROM newbie_adaptation WHERE branch_name = ? ORDER BY id DESC",
+            (branch_name,)
+        ).fetchall()
+    return {"success": True, "data": [dict(r) for r in rows]}
 
 # ============= ПЛАНЫ МАСТЕРОВ =============
 
 @app.post("/master-plans/{branch_name}")
 def submit_master_plans(branch_name: str, plans: List[MasterPlan]):
-    """Добавление планов мастеров"""
-    try:
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
-        
-        sheet_name = "Планы мастеров"
-        headers = [
-            "Дата отправки", "Месяц", "Имя мастера", "Средний чек (план)", 
-            "Средний чек (факт)", "Доп. услуги (план)", "Доп. услуги (факт)",
-            "Продажи (план)", "Продажи (факт)", "ЗП (план)", "ЗП (факт)"
-        ]
-        worksheet = ensure_sheet_exists(client, spreadsheet_id, sheet_name, headers)
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        for plan in plans:
-            row = [
-                timestamp,
-                str(plan.month),
-                str(plan.master_name),
-                float(plan.average_check_plan),
-                float(plan.average_check_fact),
-                int(plan.additional_services_plan),
-                int(plan.additional_services_fact),
-                float(plan.sales_plan),
-                float(plan.sales_fact),
-                float(plan.salary_plan),
-                float(plan.salary_fact)
-            ]
-            insert_row_at_top(worksheet, row)
-        
-        clear_cache_for_branch(branch_name)
-        
-        return {"success": True, "message": f"Добавлено {len(plans)} планов"}
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
+        for p in plans:
+            conn.execute(
+                "INSERT INTO master_plans (branch_name, submitted_at, month, master_name, average_check_plan, average_check_fact, additional_services_plan, additional_services_fact, sales_plan, sales_fact, salary_plan, salary_fact) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (branch_name, timestamp, p.month, p.master_name, p.average_check_plan, p.average_check_fact, p.additional_services_plan, p.additional_services_fact, p.sales_plan, p.sales_fact, p.salary_plan, p.salary_fact)
+            )
+    return {"success": True, "message": f"Добавлено {len(plans)} планов"}
 
 @app.get("/master-plans/{branch_name}")
 def get_master_plans(branch_name: str):
-    """Получение планов мастеров (с кешированием)"""
-    cache_key = f"master_plans_{branch_name}"
-    cached = get_from_cache(cache_key)
-    if cached:
-        return cached
-    
-    try:
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
-        spreadsheet = client.open_by_key(spreadsheet_id)
-        worksheet = spreadsheet.worksheet("Планы мастеров")
-        data = worksheet.get_all_records()
-        
-        result = {"success": True, "data": data}
-        set_cache(cache_key, result)
-        return result
-    except:
-        return {"success": True, "data": []}
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT submitted_at as 'Дата отправки', month as 'Месяц', master_name as 'Имя мастера', average_check_plan as 'Средний чек (план)', average_check_fact as 'Средний чек (факт)', additional_services_plan as 'Доп. услуги (план)', additional_services_fact as 'Доп. услуги (факт)', sales_plan as 'Продажи (план)', sales_fact as 'Продажи (факт)', salary_plan as 'ЗП (план)', salary_fact as 'ЗП (факт)' FROM master_plans WHERE branch_name = ? ORDER BY id DESC",
+            (branch_name,)
+        ).fetchall()
+    return {"success": True, "data": [dict(r) for r in rows]}
 
 # ============= ОТЗЫВЫ =============
 
 @app.post("/reviews/{branch_name}")
-def submit_reviews(branch_name: str, reviews: List[Reviews]):
-    """Добавление отзывов"""
-    try:
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
-        
-        sheet_name = "Отзывы"
-        headers = [
-            "Дата отправки", "Неделя", "Имя руководителя", 
-            "План", "Факт", "Месячная цель"
-        ]
-        worksheet = ensure_sheet_exists(client, spreadsheet_id, sheet_name, headers)
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        for review in reviews:
-            row = [
-                timestamp,
-                str(review.week),
-                str(review.manager_name),
-                int(review.plan),
-                int(review.fact),
-                int(review.monthly_target)
-            ]
-            insert_row_at_top(worksheet, row)
-        
-        clear_cache_for_branch(branch_name)
-        
-        return {"success": True, "message": f"Добавлено {len(reviews)} отзывов"}
-    except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+def submit_reviews(branch_name: str, reviews_list: List[Reviews]):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
+        for r in reviews_list:
+            conn.execute(
+                "INSERT INTO reviews (branch_name, submitted_at, week, manager_name, plan, fact, monthly_target) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (branch_name, timestamp, r.week, r.manager_name, r.plan, r.fact, r.monthly_target)
+            )
+    return {"success": True, "message": f"Добавлено {len(reviews_list)} отзывов"}
 
 @app.get("/reviews/{branch_name}")
 def get_reviews(branch_name: str):
-    """Получение отзывов (с кешированием)"""
-    cache_key = f"reviews_{branch_name}"
-    cached = get_from_cache(cache_key)
-    if cached:
-        return cached
-    
-    try:
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
-        spreadsheet = client.open_by_key(spreadsheet_id)
-        worksheet = spreadsheet.worksheet("Отзывы")
-        data = worksheet.get_all_records()
-        
-        result = {"success": True, "data": data}
-        set_cache(cache_key, result)
-        return result
-    except:
-        return {"success": True, "data": []}
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT submitted_at as 'Дата отправки', week as 'Неделя', manager_name as 'Имя руководителя', plan as 'План', fact as 'Факт', monthly_target as 'Месячная цель' FROM reviews WHERE branch_name = ? ORDER BY id DESC",
+            (branch_name,)
+        ).fetchall()
+    return {"success": True, "data": [dict(r) for r in rows]}
 
-# ============= ИТОГОВЫЙ ОТЧЕТ =============
+# ============= ИТОГОВЫЙ ОТЧЁТ =============
 
 @app.post("/branch-summary/{branch_name}")
 def generate_branch_summary(branch_name: str, summary: BranchSummary):
-    """Генерация итогового отчета филиала с расчетом всех метрик"""
-    try:
-        logger.info(f"🔍 Формирование сводки для '{branch_name}', месяц: '{summary.month}'")
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
+    with get_db() as conn:
+        # Удаляем старые записи за этот месяц
+        conn.execute("DELETE FROM branch_summaries WHERE branch_name = ? AND month = ?", (branch_name, summary.month))
         
-        # ВАЖНО: Очищаем кеш ПЕРЕД загрузкой данных, чтобы получить актуальные данные
-        clear_cache_for_branch(branch_name)
+        me_rows = conn.execute("SELECT submitted_at FROM morning_events WHERE branch_name = ?", (branch_name,)).fetchall()
+        fv_rows = conn.execute("SELECT submitted_at FROM field_visits WHERE branch_name = ?", (branch_name,)).fetchall()
+        oo_rows = conn.execute("SELECT submitted_at FROM one_on_one WHERE branch_name = ?", (branch_name,)).fetchall()
+        mp_rows = conn.execute("SELECT submitted_at FROM master_plans WHERE branch_name = ?", (branch_name,)).fetchall()
+        wm_rows = conn.execute("SELECT submitted_at FROM weekly_metrics WHERE branch_name = ?", (branch_name,)).fetchall()
+        rv_rows = conn.execute("SELECT submitted_at, fact FROM reviews WHERE branch_name = ?", (branch_name,)).fetchall()
+        na_rows = conn.execute("SELECT submitted_at FROM newbie_adaptation WHERE branch_name = ?", (branch_name,)).fetchall()
         
-        # Получаем все данные для расчета метрик
-        sheet_names = [
-            "Утренние мероприятия",
-            "Полевые выходы",
-            "One-on-One",
-            "Планы мастеров",
-            "Еженедельные показатели",
-            "Отзывы",
-            "Адаптация новичков"
-        ]
-        
-        logger.info(f"📊 Загрузка данных из {len(sheet_names)} листов...")
-        all_data = get_all_sheet_data_batch(client, spreadsheet_id, sheet_names)
-        
-        # Подсчитываем метрики для указанного месяца
         metrics = {
-            "Утренние мероприятия": {
-                "current": count_records_for_month_from_data(all_data.get("Утренние мероприятия", []), summary.month),
-                "goal": BRANCH_GOALS["morning_events"]
-            },
-            "Полевые выходы": {
-                "current": count_records_for_month_from_data(all_data.get("Полевые выходы", []), summary.month),
-                "goal": BRANCH_GOALS["field_visits"]
-            },
-            "One-on-One": {
-                "current": count_records_for_month_from_data(all_data.get("One-on-One", []), summary.month),
-                "goal": BRANCH_GOALS["one_on_one"]
-            },
-            "Планы мастеров": {
-                "current": count_records_for_month_from_data(all_data.get("Планы мастеров", []), summary.month),
-                "goal": BRANCH_GOALS["master_plans"]
-            },
-            "Еженедельные отчёты": {
-                "current": count_records_for_month_from_data(all_data.get("Еженедельные показатели", []), summary.month),
-                "goal": BRANCH_GOALS["weekly_reports"]
-            },
-            "Отзывы": {
-                "current": sum_reviews_for_month_from_data(all_data.get("Отзывы", []), summary.month),
-                "goal": BRANCH_GOALS["reviews"]
-            },
-            "Новые сотрудники": {
-                "current": count_records_for_month_from_data(all_data.get("Адаптация новичков", []), summary.month),
-                "goal": BRANCH_GOALS["new_employees"]
-            }
+            "Утренние мероприятия": {"current": count_records_for_month(me_rows, 'submitted_at', summary.month), "goal": BRANCH_GOALS["morning_events"]},
+            "Полевые выходы": {"current": count_records_for_month(fv_rows, 'submitted_at', summary.month), "goal": BRANCH_GOALS["field_visits"]},
+            "One-on-One": {"current": count_records_for_month(oo_rows, 'submitted_at', summary.month), "goal": BRANCH_GOALS["one_on_one"]},
+            "Планы мастеров": {"current": count_records_for_month(mp_rows, 'submitted_at', summary.month), "goal": BRANCH_GOALS["master_plans"]},
+            "Еженедельные отчёты": {"current": count_records_for_month(wm_rows, 'submitted_at', summary.month), "goal": BRANCH_GOALS["weekly_reports"]},
+            "Отзывы": {"current": sum_reviews_for_month(rv_rows, summary.month), "goal": BRANCH_GOALS["reviews"]},
+            "Новые сотрудники": {"current": count_records_for_month(na_rows, 'submitted_at', summary.month), "goal": BRANCH_GOALS["new_employees"]},
         }
         
-        logger.info(f"📈 Рассчитано метрик: {len(metrics)}")
-        for name, data in metrics.items():
-            logger.info(f"   • {name}: {data['current']}/{data['goal']}")
-        
-        # Создаем/получаем лист для сводок
-        sheet_name = "Итоговые отчеты"
-        headers = ["Дата отправки", "Руководитель", "Месяц", "Метрика", "Текущее количество", "Цель на месяц", "Выполнение %"]
-        worksheet = ensure_sheet_exists(client, spreadsheet_id, sheet_name, headers)
-        
-        # ИСПРАВЛЕНИЕ: Удаляем старые записи за этот же месяц перед вставкой новых
-        try:
-            all_values = worksheet.get_all_values()
-            if len(all_values) > 1:
-                # Ищем строки с тем же месяцем (колонка 2, индекс с 0)
-                rows_to_delete = []
-                for row_idx in range(1, len(all_values)):  # Пропускаем заголовок
-                    if len(all_values[row_idx]) > 2 and all_values[row_idx][2] == summary.month:
-                        rows_to_delete.append(row_idx + 1)  # +1 т.к. gspread считает с 1
-                
-                # Удаляем строки снизу вверх, чтобы не сбивались индексы
-                if rows_to_delete:
-                    logger.info(f"🗑️ Удаляем {len(rows_to_delete)} старых записей за '{summary.month}'")
-                    for row_idx in sorted(rows_to_delete, reverse=True):
-                        worksheet.delete_rows(row_idx)
-                    logger.info(f"✅ Старые записи удалены")
-        except Exception as del_err:
-            logger.warning(f"⚠️ Ошибка при удалении старых записей: {del_err}")
-        
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Добавляем строку для каждой метрики
-        for metric_name, metric_data in metrics.items():
-            percentage = round((metric_data["current"] / metric_data["goal"]) * 100, 1) if metric_data["goal"] > 0 else 0
-            row = [
-                timestamp,
-                str(summary.manager),
-                str(summary.month),
-                metric_name,
-                int(metric_data["current"]),
-                int(metric_data["goal"]),
-                float(percentage)
-            ]
-            insert_row_at_top(worksheet, row)
-            logger.info(f"✅ Добавлена строка: {metric_name}")
-        
-        # Очищаем кеш ПОСЛЕ записи
-        clear_cache_for_branch(branch_name)
-        
-        logger.info(f"✅ Сводка успешно сформирована!")
-        
-        return {"success": True, "message": "Отчет успешно создан"}
-    except Exception as e:
-        logger.error(f"❌ Ошибка формирования сводки: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
+        for metric_name, data in metrics.items():
+            pct = round((data["current"] / data["goal"]) * 100, 1) if data["goal"] > 0 else 0
+            conn.execute(
+                "INSERT INTO branch_summaries (branch_name, submitted_at, manager, month, metric, current_value, goal_value, percentage) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (branch_name, timestamp, summary.manager, summary.month, metric_name, data["current"], data["goal"], pct)
+            )
+    
+    return {"success": True, "message": "Отчёт успешно создан"}
 
 @app.get("/branch-summary/{branch_name}")
 def get_branch_summary(branch_name: str):
-    """Получение итоговых отчетов (с кешированием)"""
-    cache_key = f"branch_summary_{branch_name}"
-    cached = get_from_cache(cache_key)
-    if cached:
-        logger.info(f"📦 Возвращаем кешированную сводку ({len(cached.get('data', []))} записей)")
-        return cached
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT submitted_at as 'Дата отправки', manager as 'Руководитель', month as 'Месяц', metric as 'Метрика', current_value as 'Текущее количество', goal_value as 'Цель на месяц', percentage as 'Выполнение %' FROM branch_summaries WHERE branch_name = ? ORDER BY id DESC",
+            (branch_name,)
+        ).fetchall()
+    return {"success": True, "data": [dict(r) for r in rows]}
+
+# ============= АДМИН: ПРОСМОТР ВСЕХ ДАННЫХ =============
+
+@app.get("/admin/all-dashboards")
+def admin_all_dashboards():
+    """Сводка по всем филиалам для админа"""
+    current_month = get_current_month_ru()
+    result = []
     
-    try:
-        logger.info(f"🔍 Загружаем сводку из Google Sheets для '{branch_name}'")
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
-        spreadsheet = client.open_by_key(spreadsheet_id)
-        worksheet = spreadsheet.worksheet("Итоговые отчеты")
+    with get_db() as conn:
+        branches = conn.execute("SELECT name, manager_name FROM branches ORDER BY name").fetchall()
         
-        # ИСПРАВЛЕНИЕ: Сначала пытаемся get_all_records, если не работает - используем get_all_values
-        try:
-            data = worksheet.get_all_records()
-            logger.info(f"✅ Загружено {len(data)} записей сводки через get_all_records()")
-        except Exception as e:
-            logger.warning(f"⚠️ get_all_records() не сработал: {e}")
-            logger.info(f"🔄 Пробуем альтернативный метод get_all_values()...")
+        for branch in branches:
+            bn = branch['name']
+            me = count_records_for_month(conn.execute("SELECT submitted_at FROM morning_events WHERE branch_name = ?", (bn,)).fetchall(), 'submitted_at', current_month)
+            fv = count_records_for_month(conn.execute("SELECT submitted_at FROM field_visits WHERE branch_name = ?", (bn,)).fetchall(), 'submitted_at', current_month)
+            oo = count_records_for_month(conn.execute("SELECT submitted_at FROM one_on_one WHERE branch_name = ?", (bn,)).fetchall(), 'submitted_at', current_month)
+            mp = count_records_for_month(conn.execute("SELECT submitted_at FROM master_plans WHERE branch_name = ?", (bn,)).fetchall(), 'submitted_at', current_month)
+            wm = count_records_for_month(conn.execute("SELECT submitted_at FROM weekly_metrics WHERE branch_name = ?", (bn,)).fetchall(), 'submitted_at', current_month)
+            rv = sum_reviews_for_month(conn.execute("SELECT submitted_at, fact FROM reviews WHERE branch_name = ?", (bn,)).fetchall(), current_month)
+            na = count_records_for_month(conn.execute("SELECT submitted_at FROM newbie_adaptation WHERE branch_name = ?", (bn,)).fetchall(), 'submitted_at', current_month)
             
-            # Получаем все значения как список списков
-            all_values = worksheet.get_all_values()
-            if not all_values or len(all_values) < 2:
-                logger.info(f"ℹ️ Лист пустой или только заголовки")
-                return {"success": True, "data": []}
-            
-            # Первая строка - заголовки
-            headers = all_values[0]
-            # Остальные строки - данные
-            data = []
-            for row in all_values[1:]:
-                # Создаем словарь из заголовков и значений
-                row_dict = {}
-                for i, header in enumerate(headers):
-                    if i < len(row):
-                        row_dict[header] = row[i]
-                    else:
-                        row_dict[header] = ""
-                data.append(row_dict)
-            
-            logger.info(f"✅ Загружено {len(data)} записей сводки через get_all_values()")
-        
-        result = {"success": True, "data": data}
-        set_cache(cache_key, result)
-        return result
-    except Exception as e:
-        logger.error(f"❌ Ошибка загрузки сводки: {e}")
-        return {"success": True, "data": []}
+            result.append({
+                "branch_name": bn,
+                "manager": branch['manager_name'],
+                "month": current_month,
+                "morning_events": {"current": me, "goal": BRANCH_GOALS["morning_events"]},
+                "field_visits": {"current": fv, "goal": BRANCH_GOALS["field_visits"]},
+                "one_on_one": {"current": oo, "goal": BRANCH_GOALS["one_on_one"]},
+                "master_plans": {"current": mp, "goal": BRANCH_GOALS["master_plans"]},
+                "weekly_reports": {"current": wm, "goal": BRANCH_GOALS["weekly_reports"]},
+                "reviews": {"current": rv, "goal": BRANCH_GOALS["reviews"]},
+                "new_employees": {"current": na, "goal": BRANCH_GOALS["new_employees"]},
+            })
+    
+    return {"success": True, "data": result, "month": current_month}
 
-# ============= ОТПРАВКА ОТЧЕТОВ НА EMAIL =============
+@app.get("/admin/branch-data/{branch_name}/{section}")
+def admin_get_branch_data(branch_name: str, section: str):
+    """Получить данные любой секции любого филиала (для админа)"""
+    section_map = {
+        "morning-events": "morning_events",
+        "field-visits": "field_visits",
+        "one-on-one": "one_on_one",
+        "weekly-metrics": "weekly_metrics",
+        "master-plans": "master_plans",
+        "reviews": "reviews",
+        "newbie-adaptation": "newbie_adaptation",
+        "branch-summary": "branch_summaries",
+    }
+    
+    endpoint_fn = {
+        "morning-events": get_morning_events,
+        "field-visits": get_field_visits,
+        "one-on-one": get_one_on_one,
+        "weekly-metrics": get_weekly_metrics,
+        "master-plans": get_master_plans,
+        "reviews": get_reviews,
+        "newbie-adaptation": get_newbie_adaptation,
+        "branch-summary": get_branch_summary,
+    }
+    
+    if section not in endpoint_fn:
+        raise HTTPException(status_code=400, detail=f"Неизвестная секция: {section}")
+    
+    return endpoint_fn[section](branch_name)
 
-class EmailReportRequest(BaseModel):
-    period_type: str  # "day", "week", "month", "all"
-    custom_date: Optional[str] = None  # Для "day" - конкретная дата YYYY-MM-DD
+# ============= EMAIL =============
 
 def get_period_filter_dates(period_type: str, custom_date: Optional[str] = None):
-    """Возвращает (start_date, end_date, period_label) для фильтрации"""
     now = datetime.now()
-    
     if period_type == "day":
-        if custom_date:
-            target = datetime.strptime(custom_date, "%Y-%m-%d")
-        else:
-            target = now
+        target = datetime.strptime(custom_date, "%Y-%m-%d") if custom_date else now
         start = target.replace(hour=0, minute=0, second=0, microsecond=0)
         end = target.replace(hour=23, minute=59, second=59, microsecond=0)
         label = target.strftime("%d.%m.%Y")
     elif period_type == "week":
-        # Текущая неделя (понедельник - воскресенье)
-        weekday = now.weekday()  # 0=пн
+        weekday = now.weekday()
         start = (now - timedelta(days=weekday)).replace(hour=0, minute=0, second=0, microsecond=0)
         end = (start + timedelta(days=6)).replace(hour=23, minute=59, second=59, microsecond=0)
         label = f"{start.strftime('%d.%m.%Y')} - {end.strftime('%d.%m.%Y')}"
     elif period_type == "month":
-        # Текущий месяц
         start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        # Последний день месяца
         if now.month == 12:
-            end = now.replace(year=now.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(seconds=1)
+            end = now.replace(year=now.year + 1, month=1, day=1) - timedelta(seconds=1)
         else:
-            end = now.replace(month=now.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(seconds=1)
+            end = now.replace(month=now.month + 1, day=1) - timedelta(seconds=1)
         months_ru = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
                      'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь']
         label = f"{months_ru[now.month - 1]} {now.year}"
-    else:  # "all"
+    else:
         start = datetime(2020, 1, 1)
         end = datetime(2099, 12, 31)
         label = "Весь период"
-    
     return start, end, label
 
-def parse_date_flexible(date_str: str) -> Optional[datetime]:
-    """Парсит дату в различных форматах, возвращает datetime или None"""
-    date_str = str(date_str).strip()
-    if not date_str:
-        return None
-    
-    # Берём только часть с датой (без времени)
-    date_part = date_str.split()[0]
-    
-    # Пробуем разные форматы
-    formats = [
-        "%Y-%m-%d",      # 2025-03-04
-        "%d.%m.%Y",      # 04.03.2025
-        "%d/%m/%Y",      # 04/03/2025
-        "%m/%d/%Y",      # 03/04/2025 (US format from Google Sheets)
-    ]
-    
-    for fmt in formats:
-        try:
-            return datetime.strptime(date_part, fmt)
-        except ValueError:
-            continue
-    
-    return None
-
-def filter_records_by_period(records: List[Dict], start: datetime, end: datetime) -> List[Dict]:
-    """Фильтрует записи по периоду"""
+def filter_rows_by_period(rows, start, end):
     filtered = []
-    # Сравниваем только даты (без времени) для надёжности
-    start_date = start.date()
-    end_date = end.date()
-    
-    for record in records:
-        record_date_str = record.get('Дата отправки', '') or record.get('Дата', '') or record.get('Дата начала', '')
-        if record_date_str:
-            parsed = parse_date_flexible(str(record_date_str))
-            if parsed and start_date <= parsed.date() <= end_date:
-                filtered.append(record)
+    for row in rows:
+        d = dict(row)
+        date_str = d.get('Дата отправки', '') or d.get('submitted_at', '')
+        dt = parse_date_flexible(str(date_str))
+        if dt and start.date() <= dt.date() <= end.date():
+            filtered.append(d)
     return filtered
 
-def add_sheet_to_workbook(wb: Workbook, records: List[Dict], sheet_name: str):
-    """Добавляет лист с данными в существующий Workbook"""
-    if not records:
-        return
+def build_multi_sheet_xlsx(sheets_data: Dict[str, List[Dict]]) -> bytes:
+    wb = Workbook()
+    wb.remove(wb.active)
     
-    ws = wb.create_sheet(title=sheet_name[:31])  # Excel ограничивает длину имени листа 31 символом
-    
-    headers = list(records[0].keys())
-    
-    # Стили для заголовков
     header_font = Font(bold=True, color="FFFFFF", size=11)
     header_fill = PatternFill(start_color="2E86AB", end_color="2E86AB", fill_type="solid")
     header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    thin_border = Border(
-        left=Side(style="thin"),
-        right=Side(style="thin"),
-        top=Side(style="thin"),
-        bottom=Side(style="thin")
-    )
-    
-    # Записываем заголовки
-    for col_idx, header in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col_idx, value=header)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = header_alignment
-        cell.border = thin_border
-    
-    # Записываем данные
-    data_alignment = Alignment(vertical="center", wrap_text=True)
-    for row_idx, record in enumerate(records, 2):
-        for col_idx, header in enumerate(headers, 1):
-            value = record.get(header, "")
-            # Пробуем конвертировать числовые строки
-            if isinstance(value, str):
-                try:
-                    if '.' in value:
-                        value = float(value)
-                    else:
-                        value = int(value)
-                except (ValueError, TypeError):
-                    pass
-            cell = ws.cell(row=row_idx, column=col_idx, value=value)
-            cell.alignment = data_alignment
-            cell.border = thin_border
-    
-    # Автоширина колонок
-    for col_idx, header in enumerate(headers, 1):
-        max_length = len(str(header))
-        for row_idx in range(2, len(records) + 2):
-            cell_value = ws.cell(row=row_idx, column=col_idx).value
-            if cell_value:
-                max_length = max(max_length, len(str(cell_value)))
-        ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = min(max_length + 3, 50)
-    
-    # Закрепляем первую строку (заголовки)
-    ws.freeze_panes = "A2"
-
-def build_multi_sheet_xlsx(sheets_data: Dict[str, List[Dict]]) -> bytes:
-    """Создаёт один Excel-файл с несколькими вкладками (листами)"""
-    wb = Workbook()
-    # Удаляем дефолтный пустой лист
-    wb.remove(wb.active)
+    thin_border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
     
     for sheet_name, records in sheets_data.items():
-        if records:
-            add_sheet_to_workbook(wb, records, sheet_name)
+        if not records:
+            continue
+        ws = wb.create_sheet(title=sheet_name[:31])
+        headers = list(records[0].keys())
+        
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_idx, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_alignment
+            cell.border = thin_border
+        
+        for row_idx, record in enumerate(records, 2):
+            for col_idx, header in enumerate(headers, 1):
+                value = record.get(header, "")
+                if isinstance(value, str):
+                    try:
+                        value = float(value) if '.' in value else int(value)
+                    except (ValueError, TypeError):
+                        pass
+                cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                cell.border = thin_border
+        
+        for col_idx, header in enumerate(headers, 1):
+            max_length = len(str(header))
+            for row_idx in range(2, len(records) + 2):
+                cv = ws.cell(row=row_idx, column=col_idx).value
+                if cv:
+                    max_length = max(max_length, len(str(cv)))
+            ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = min(max_length + 3, 50)
+        ws.freeze_panes = "A2"
     
     if not wb.sheetnames:
         return b""
-    
     output = io.BytesIO()
     wb.save(output)
     return output.getvalue()
 
 def send_email_with_attachments(to_email: str, subject: str, body_html: str, attachments: List[Dict]):
-    """
-    Отправляет email с вложениями через SMTP.
-    attachments: [{"filename": "...", "content": bytes}]  # Excel файлы в байтах
-    """
     if not SMTP_USER or not SMTP_PASSWORD:
-        raise HTTPException(status_code=500, detail="SMTP не настроен. Укажите SMTP_USER и SMTP_PASSWORD в переменных окружения.")
-    
+        raise HTTPException(status_code=500, detail="SMTP не настроен")
     if not to_email:
-        raise HTTPException(status_code=500, detail="REPORT_EMAIL_TO не настроен. Укажите email получателя в переменных окружения.")
+        raise HTTPException(status_code=500, detail="REPORT_EMAIL_TO не настроен")
     
     msg = MIMEMultipart()
     msg['From'] = SMTP_USER
     msg['To'] = to_email
     msg['Subject'] = subject
-    
     msg.attach(MIMEText(body_html, 'html', 'utf-8'))
     
     for att in attachments:
@@ -1562,10 +854,15 @@ def send_email_with_attachments(to_email: str, subject: str, body_html: str, att
             msg.attach(part)
     
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.send_message(msg)
+        if SMTP_USE_SSL:
+            with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+                server.login(SMTP_USER, SMTP_PASSWORD)
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+                server.starttls()
+                server.login(SMTP_USER, SMTP_PASSWORD)
+                server.send_message(msg)
         logger.info(f"✅ Email отправлен на {to_email}")
     except Exception as e:
         logger.error(f"❌ Ошибка отправки email: {e}")
@@ -1573,103 +870,58 @@ def send_email_with_attachments(to_email: str, subject: str, body_html: str, att
 
 @app.post("/send-report/{branch_name}")
 def send_report_email(branch_name: str, request: EmailReportRequest):
-    """Отправляет отчёт из Google Sheets на email за выбранный период"""
-    try:
-        logger.info(f"📧 Отправка отчёта для '{branch_name}', период: '{request.period_type}'")
-        
-        client = get_sheets_client()
-        spreadsheet_id = get_branch_spreadsheet_id(client, branch_name)
-        
-        # Определяем период
-        start, end, period_label = get_period_filter_dates(request.period_type, request.custom_date)
-        
-        # Загружаем все листы
-        sheet_names = [
-            "Утренние мероприятия",
-            "Полевые выходы",
-            "One-on-One",
-            "Планы мастеров",
-            "Еженедельные показатели",
-            "Отзывы",
-            "Адаптация новичков",
-            "Итоговые отчеты"
-        ]
-        
-        # Очищаем кеш чтобы получить свежие данные
-        clear_cache_for_branch(branch_name)
-        all_data = get_all_sheet_data_batch(client, spreadsheet_id, sheet_names)
-        
-        # Фильтруем и собираем данные для вкладок Excel
-        sheets_data = {}
-        total_records = 0
-        included_sheets = []
-        
-        for sheet_name in sheet_names:
-            records = all_data.get(sheet_name, [])
-            if request.period_type != "all":
-                records = filter_records_by_period(records, start, end)
-            
-            if records:
-                sheets_data[sheet_name] = records
-                total_records += len(records)
-                included_sheets.append(f"{sheet_name} ({len(records)} зап.)")
-        
-        if total_records == 0:
-            return {"success": False, "message": f"Нет данных за период: {period_label}"}
-        
-        # Создаём один Excel-файл со всеми вкладками
-        xlsx_content = build_multi_sheet_xlsx(sheets_data)
-        
-        safe_branch = branch_name.replace(" ", "_").replace("/", "_")
-        safe_period = period_label.replace(" ", "_").replace("/", "_").replace(".", "_")
-        filename = f"Отчёт_{safe_branch}_{safe_period}.xlsx"
-        
-        attachments = [{
-            "filename": filename,
-            "content": xlsx_content
-        }]
-        
-        # Формируем тему и тело письма
-        subject = f"Отчёт {branch_name} — {period_label}"
-        
-        body_html = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; color: #333;">
-            <h2>Отчёт по филиалу: {branch_name}</h2>
-            <p><strong>Период:</strong> {period_label}</p>
-            <p><strong>Дата формирования:</strong> {datetime.now().strftime('%d.%m.%Y %H:%M')}</p>
-            <hr>
-            <p>Во вложении Excel-файл с {len(sheets_data)} вкладками ({total_records} записей):</p>
-            <ul>
-                {''.join(f"<li>{name}</li>" for name in included_sheets)}
-            </ul>
-            <hr>
-            <p style="color: #888; font-size: 12px;">Отчёт сформирован автоматически системой BarberCRM</p>
-        </body>
-        </html>
-        """
-        
-        send_email_with_attachments(REPORT_EMAIL_TO, subject, body_html, attachments)
-        
-        return {
-            "success": True, 
-            "message": f"Отчёт отправлен на {REPORT_EMAIL_TO}",
-            "period": period_label,
-            "sheets_count": len(sheets_data),
-            "total_records": total_records
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Ошибка отправки отчёта: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
+    start, end, period_label = get_period_filter_dates(request.period_type, request.custom_date)
+    
+    sections = {
+        "Утренние мероприятия": get_morning_events,
+        "Полевые выходы": get_field_visits,
+        "One-on-One": get_one_on_one,
+        "Планы мастеров": get_master_plans,
+        "Еженедельные показатели": get_weekly_metrics,
+        "Отзывы": get_reviews,
+        "Адаптация новичков": get_newbie_adaptation,
+        "Итоговые отчеты": get_branch_summary,
+    }
+    
+    sheets_data = {}
+    total_records = 0
+    
+    for name, fn in sections.items():
+        result = fn(branch_name)
+        records = result.get("data", [])
+        if request.period_type != "all":
+            records = filter_rows_by_period(records, start, end)
+        if records:
+            sheets_data[name] = records
+            total_records += len(records)
+    
+    if total_records == 0:
+        return {"success": False, "message": f"Нет данных за период: {period_label}"}
+    
+    xlsx_content = build_multi_sheet_xlsx(sheets_data)
+    safe_branch = branch_name.replace(" ", "_").replace("/", "_")
+    safe_period = period_label.replace(" ", "_").replace("/", "_").replace(".", "_")
+    filename = f"Отчёт_{safe_branch}_{safe_period}.xlsx"
+    
+    subject = f"Отчёт {branch_name} — {period_label}"
+    body_html = f"""
+    <html><body style="font-family: Arial, sans-serif; color: #333;">
+        <h2>Отчёт по филиалу: {branch_name}</h2>
+        <p><strong>Период:</strong> {period_label}</p>
+        <p><strong>Дата формирования:</strong> {datetime.now().strftime('%d.%m.%Y %H:%M')}</p>
+        <hr>
+        <p>Во вложении Excel-файл с {len(sheets_data)} вкладками ({total_records} записей).</p>
+        <hr>
+        <p style="color: #888; font-size: 12px;">BarberCRM v5.0</p>
+    </body></html>
+    """
+    
+    send_email_with_attachments(REPORT_EMAIL_TO, subject, body_html, [{"filename": filename, "content": xlsx_content}])
+    
+    return {"success": True, "message": f"Отчёт отправлен на {REPORT_EMAIL_TO}", "period": period_label, "sheets_count": len(sheets_data), "total_records": total_records}
 
 @app.get("/email-config")
 def get_email_config():
-    """Проверяет настройки email"""
     return {
         "configured": bool(SMTP_USER and SMTP_PASSWORD and REPORT_EMAIL_TO),
         "smtp_host": SMTP_HOST,
