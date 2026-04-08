@@ -201,13 +201,18 @@ const AuthPage = ({ onAuth, onAdminAuth }) => {
 
 // ==================== ADMIN PANEL ====================
 const AdminPanel = ({ onLogout }) => {
+  const [tab, setTab] = useState('dashboard'); // dashboard | branches | data
   const [dashboards, setDashboards] = useState([]);
   const [branches, setBranches] = useState([]);
+  const [period, setPeriod] = useState('month');
+  const [periodLabel, setPeriodLabel] = useState('');
   const [selectedBranch, setSelectedBranch] = useState(null);
   const [selectedSection, setSelectedSection] = useState(null);
   const [sectionData, setSectionData] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [editBranch, setEditBranch] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const [toast, setToast] = useState(null);
 
   const sections = [
     { id: 'morning-events', label: 'Утренние мероприятия' },
@@ -220,70 +225,108 @@ const AdminPanel = ({ onLogout }) => {
     { id: 'branch-summary', label: 'Итоговые отчёты' },
   ];
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  const periods = [
+    { id: 'today', label: 'Сегодня' }, { id: 'yesterday', label: 'Вчера' },
+    { id: 'week', label: 'Неделя' }, { id: 'month', label: 'Месяц' },
+    { id: 'quarter', label: 'Квартал' }, { id: 'year', label: 'Год' },
+    { id: 'all', label: 'Всё время' },
+  ];
 
-  const loadData = async () => {
+  useEffect(() => { loadDashboards(); }, [period]);
+  useEffect(() => { if (tab === 'branches') loadBranches(); }, [tab]);
+
+  const showToastMsg = (message, type = 'success') => { setToast({ message, type }); };
+
+  const loadDashboards = async () => {
     setLoading(true);
     try {
-      const [dashData, brData] = await Promise.all([
-        api.request('/admin/all-dashboards'),
-        api.request('/branches/details'),
-      ]);
-      setDashboards(dashData.data || []);
-      setBranches(brData.branches || []);
+      const data = await api.request(`/admin/all-dashboards?period=${period}`);
+      setDashboards(data.data || []);
+      setPeriodLabel(data.period_label || '');
     } catch (err) { console.error(err); }
     setLoading(false);
   };
 
-  const loadSectionData = async (branchName, sectionId) => {
-    setSelectedBranch(branchName);
-    setSelectedSection(sectionId);
+  const loadBranches = async () => {
     try {
-      const data = await api.request(`/admin/branch-data/${branchName}/${sectionId}`);
+      const data = await api.request('/branches/details');
+      setBranches(data.branches || []);
+    } catch (err) { console.error(err); }
+  };
+
+  const loadSectionData = async (branchName, sectionId) => {
+    setSelectedBranch(branchName); setSelectedSection(sectionId); setTab('data');
+    try {
+      const data = await api.request(`/admin/branch-data/${branchName}/${sectionId}?period=${period}`);
       setSectionData(data.data || []);
     } catch (err) { console.error(err); setSectionData([]); }
   };
 
-  const getPct = (item, key) => {
-    const d = item[key];
-    if (!d) return 0;
-    return d.goal > 0 ? Math.round((d.current / d.goal) * 100) : 0;
+  const handleUpdateBranch = async () => {
+    try {
+      const body = {};
+      if (editForm.manager_name) body.manager_name = editForm.manager_name;
+      if (editForm.manager_phone) body.manager_phone = editForm.manager_phone;
+      if (editForm.address) body.address = editForm.address;
+      if (editForm.password) body.password = editForm.password;
+      await api.request(`/admin/branches/${editBranch}`, { method: 'PUT', body: JSON.stringify(body) });
+      showToastMsg('Филиал обновлён');
+      setEditBranch(null); setEditForm({}); loadBranches();
+    } catch (err) { showToastMsg(err.message, 'error'); }
   };
+
+  const handleDeleteBranch = async (name) => {
+    if (!confirm(`Удалить филиал "${name}" и ВСЕ его данные? Это необратимо!`)) return;
+    try {
+      await api.request(`/admin/branches/${name}`, { method: 'DELETE' });
+      showToastMsg(`Филиал "${name}" удалён`);
+      loadBranches(); loadDashboards();
+    } catch (err) { showToastMsg(err.message, 'error'); }
+  };
+
+  const getPct = (item, key) => { const d = item[key]; return (!d || d.goal <= 0) ? 0 : Math.round((d.current / d.goal) * 100); };
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       <header className="bg-gradient-to-r from-purple-700 to-pink-600 text-white px-6 py-4 flex items-center justify-between shadow-lg">
         <div className="flex items-center gap-3">
           <Icons.Shield className="w-8 h-8" />
-          <div>
-            <h1 className="text-xl font-bold">BarberCRM — Администратор</h1>
-            <p className="text-purple-200 text-sm">Сводка по всем филиалам</p>
-          </div>
+          <h1 className="text-xl font-bold">BarberCRM — Администратор</h1>
         </div>
-        <button onClick={onLogout} className="px-4 py-2 bg-white/20 rounded-lg hover:bg-white/30 transition font-medium">Выйти</button>
+        <div className="flex items-center gap-3">
+          <button onClick={() => { setTab('dashboard'); setSelectedBranch(null); }} className={`px-3 py-1.5 rounded-lg text-sm font-medium ${tab === 'dashboard' ? 'bg-white/30' : 'bg-white/10 hover:bg-white/20'}`}>Сводка</button>
+          <button onClick={() => setTab('branches')} className={`px-3 py-1.5 rounded-lg text-sm font-medium ${tab === 'branches' ? 'bg-white/30' : 'bg-white/10 hover:bg-white/20'}`}>Филиалы</button>
+          <button onClick={onLogout} className="px-3 py-1.5 bg-white/20 rounded-lg hover:bg-white/30 text-sm font-medium ml-2">Выйти</button>
+        </div>
       </header>
 
+      {/* Period filter */}
+      <div className="px-6 pt-4 flex flex-wrap gap-2">
+        {periods.map(p => (
+          <button key={p.id} onClick={() => setPeriod(p.id)} className={`px-3 py-1.5 rounded-full text-sm font-medium transition ${period === p.id ? 'bg-purple-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100 border'}`}>{p.label}</button>
+        ))}
+        {periodLabel && <span className="self-center text-sm text-gray-500 ml-2">{periodLabel}</span>}
+      </div>
+
       <div className="p-6">
-        {loading ? (
-          <div className="text-center py-16 text-gray-500">Загрузка данных...</div>
-        ) : selectedBranch && selectedSection ? (
+        {/* TAB: Data viewer */}
+        {tab === 'data' && selectedBranch && selectedSection ? (
           <div className="animate-fade-in">
-            <button onClick={() => { setSelectedBranch(null); setSelectedSection(null); }} className="mb-4 px-4 py-2 bg-white rounded-lg shadow hover:bg-gray-50 text-sm font-medium">← Назад к сводке</button>
+            <button onClick={() => { setTab('dashboard'); setSelectedBranch(null); setSelectedSection(null); }} className="mb-4 px-4 py-2 bg-white rounded-lg shadow hover:bg-gray-50 text-sm font-medium">← Назад</button>
             <h2 className="text-2xl font-bold mb-4">{selectedBranch} — {sections.find(s => s.id === selectedSection)?.label}</h2>
             {sectionData.length === 0 ? (
-              <div className="bg-white rounded-xl p-8 text-center text-gray-500">Нет данных</div>
+              <div className="bg-white rounded-xl p-8 text-center text-gray-500">Нет данных за выбранный период</div>
             ) : (
               <div className="bg-white rounded-xl shadow-sm overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-gray-50">
-                    <tr>{Object.keys(sectionData[0]).map(k => <th key={k} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">{k}</th>)}</tr>
+                    <tr>{Object.keys(sectionData[0]).filter(k => k !== 'id').map(k => <th key={k} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">{k}</th>)}</tr>
                   </thead>
                   <tbody className="divide-y">
                     {sectionData.map((row, i) => (
                       <tr key={i} className="hover:bg-gray-50">
-                        {Object.values(row).map((v, j) => <td key={j} className="px-4 py-3 text-sm whitespace-nowrap">{v}</td>)}
+                        {Object.entries(row).filter(([k]) => k !== 'id').map(([k,v], j) => <td key={j} className="px-4 py-3 text-sm whitespace-nowrap">{v}</td>)}
                       </tr>
                     ))}
                   </tbody>
@@ -291,63 +334,176 @@ const AdminPanel = ({ onLogout }) => {
               </div>
             )}
           </div>
-        ) : (
-          <>
-            {/* Branches overview */}
-            <h2 className="text-2xl font-bold mb-6">Сводка за {dashboards[0]?.month || getCurrentMonth()}</h2>
-            <div className="space-y-6">
-              {dashboards.map((item, idx) => {
-                const totalPct = Math.round(
-                  (getPct(item,'morning_events') + getPct(item,'field_visits') + getPct(item,'one_on_one') + getPct(item,'master_plans') + getPct(item,'weekly_reports') + getPct(item,'reviews') + getPct(item,'new_employees')) / 7
-                );
-                return (
-                  <div key={idx} className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 animate-fade-in">
-                    <div className="flex items-center justify-between mb-4">
+        ) : tab === 'branches' ? (
+          /* TAB: Branch management */
+          <div className="animate-fade-in">
+            <h2 className="text-2xl font-bold mb-6">Управление филиалами</h2>
+            <div className="space-y-4">
+              {branches.map((b, idx) => (
+                <div key={idx} className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+                  {editBranch === b.name ? (
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-bold">{b.name} — редактирование</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Управляющий</label>
+                          <input type="text" defaultValue={b.manager_name} onChange={e => setEditForm({...editForm, manager_name: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Телефон</label>
+                          <input type="text" defaultValue={b.manager_phone} onChange={e => setEditForm({...editForm, manager_phone: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Адрес</label>
+                          <input type="text" defaultValue={b.address} onChange={e => setEditForm({...editForm, address: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Новый пароль (пусто = не менять)</label>
+                          <input type="password" onChange={e => setEditForm({...editForm, password: e.target.value})} className="w-full px-4 py-2 border rounded-lg" placeholder="Оставьте пустым" />
+                        </div>
+                      </div>
+                      <div className="flex gap-3">
+                        <button onClick={handleUpdateBranch} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium">Сохранить</button>
+                        <button onClick={() => { setEditBranch(null); setEditForm({}); }} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm font-medium">Отмена</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between">
                       <div>
-                        <h3 className="text-xl font-bold text-gray-800">{item.branch_name}</h3>
-                        <p className="text-sm text-gray-500">Управляющий: {item.manager}</p>
+                        <h3 className="text-lg font-bold text-gray-800">{b.name}</h3>
+                        <p className="text-sm text-gray-500">{b.address}</p>
+                        <p className="text-sm text-gray-500">Управляющий: {b.manager_name} • {b.manager_phone}</p>
+                        <p className="text-xs text-gray-400">Зарегистрирован: {b.created_at}</p>
                       </div>
-                      <div className={`text-2xl font-bold px-4 py-2 rounded-lg ${totalPct >= 75 ? 'bg-green-100 text-green-700' : totalPct >= 50 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
-                        {totalPct}%
+                      <div className="flex gap-2">
+                        <button onClick={() => { setEditBranch(b.name); setEditForm({}); }} className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 text-sm font-medium">Изменить</button>
+                        <button onClick={() => handleDeleteBranch(b.name)} className="px-3 py-1.5 bg-red-50 text-red-700 rounded-lg hover:bg-red-100 text-sm font-medium">Удалить</button>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-4">
-                      {[
-                        ['morning_events','Утренние','🌅'],['field_visits','Полевые','🚶'],['one_on_one','1-on-1','🤝'],
-                        ['master_plans','Планы','📋'],['weekly_reports','Еженед.','📊'],['reviews','Отзывы','⭐'],['new_employees','Новички','👶']
-                      ].map(([key, label, emoji]) => {
-                        const d = item[key] || {current:0,goal:1};
-                        const pct = d.goal > 0 ? Math.round((d.current/d.goal)*100) : 0;
-                        return (
-                          <div key={key} className="text-center p-2 rounded-lg bg-gray-50">
-                            <div className="text-lg">{emoji}</div>
-                            <div className="text-xs text-gray-500">{label}</div>
-                            <div className="font-bold">{d.current}/{d.goal}</div>
-                            <div className={`text-xs font-medium ${pct >= 100 ? 'text-green-600' : pct >= 50 ? 'text-yellow-600' : 'text-red-600'}`}>{pct}%</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {sections.map(s => (
-                        <button key={s.id} onClick={() => loadSectionData(item.branch_name, s.id)} className="px-3 py-1 text-xs bg-blue-50 text-blue-700 rounded-full hover:bg-blue-100 transition font-medium">
-                          {s.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-              {dashboards.length === 0 && (
-                <div className="bg-white rounded-xl p-8 text-center text-gray-500">Нет зарегистрированных филиалов</div>
-              )}
+                  )}
+                </div>
+              ))}
+              {branches.length === 0 && <div className="bg-white rounded-xl p-8 text-center text-gray-500">Нет зарегистрированных филиалов</div>}
             </div>
+          </div>
+        ) : (
+          /* TAB: Dashboard */
+          <>
+            {loading ? <div className="text-center py-16 text-gray-500">Загрузка...</div> : (
+              <div className="space-y-6">
+                {dashboards.map((item, idx) => {
+                  const totalPct = Math.round((getPct(item,'morning_events')+getPct(item,'field_visits')+getPct(item,'one_on_one')+getPct(item,'master_plans')+getPct(item,'weekly_reports')+getPct(item,'reviews')+getPct(item,'new_employees'))/7);
+                  return (
+                    <div key={idx} className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 animate-fade-in">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <h3 className="text-xl font-bold text-gray-800">{item.branch_name}</h3>
+                          <p className="text-sm text-gray-500">Управляющий: {item.manager}</p>
+                        </div>
+                        <div className={`text-2xl font-bold px-4 py-2 rounded-lg ${totalPct >= 75 ? 'bg-green-100 text-green-700' : totalPct >= 50 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>{totalPct}%</div>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-4">
+                        {[['morning_events','Утренние','🌅'],['field_visits','Полевые','🚶'],['one_on_one','1-on-1','🤝'],['master_plans','Планы','📋'],['weekly_reports','Еженед.','📊'],['reviews','Отзывы','⭐'],['new_employees','Новички','👶']].map(([key,label,emoji]) => {
+                          const d = item[key]||{current:0,goal:1}; const pct = d.goal>0 ? Math.round((d.current/d.goal)*100) : 0;
+                          return (<div key={key} className="text-center p-2 rounded-lg bg-gray-50"><div className="text-lg">{emoji}</div><div className="text-xs text-gray-500">{label}</div><div className="font-bold">{d.current}/{d.goal}</div><div className={`text-xs font-medium ${pct>=100?'text-green-600':pct>=50?'text-yellow-600':'text-red-600'}`}>{pct}%</div></div>);
+                        })}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {sections.map(s => (<button key={s.id} onClick={() => loadSectionData(item.branch_name, s.id)} className="px-3 py-1 text-xs bg-blue-50 text-blue-700 rounded-full hover:bg-blue-100 transition font-medium">{s.label}</button>))}
+                      </div>
+                    </div>
+                  );
+                })}
+                {dashboards.length === 0 && <div className="bg-white rounded-xl p-8 text-center text-gray-500">Нет филиалов</div>}
+              </div>
+            )}
           </>
         )}
       </div>
     </div>
   );
 };
+// ==================== EDITABLE TABLE (for branch history views) ====================
+const EditableTable = ({ data, section, onRefresh }) => {
+  const [editingId, setEditingId] = useState(null);
+  const [editValues, setEditValues] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  if (!data || data.length === 0) return <div className="bg-white rounded-xl p-8 text-center text-gray-500">Нет записей</div>;
+
+  const columns = Object.keys(data[0]).filter(k => k !== 'id');
+
+  const startEdit = (row) => {
+    setEditingId(row.id);
+    const vals = {};
+    columns.forEach(k => { vals[k] = row[k]; });
+    setEditValues(vals);
+  };
+
+  const saveEdit = async () => {
+    setSaving(true);
+    try {
+      await api.request(`/record/${section}/${editingId}`, { method: 'PUT', body: JSON.stringify(editValues) });
+      setEditingId(null); setEditValues({});
+      if (onRefresh) onRefresh();
+    } catch (err) { alert('Ошибка: ' + err.message); }
+    setSaving(false);
+  };
+
+  const deleteRecord = async (id) => {
+    if (!confirm('Удалить эту запись?')) return;
+    try {
+      await api.request(`/record/${section}/${id}`, { method: 'DELETE' });
+      if (onRefresh) onRefresh();
+    } catch (err) { alert('Ошибка: ' + err.message); }
+  };
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm overflow-x-auto">
+      <table className="w-full">
+        <thead className="bg-gray-50">
+          <tr>
+            {columns.map(k => <th key={k} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">{k}</th>)}
+            <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase w-24">Действия</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y">
+          {data.map((row, i) => (
+            <tr key={row.id || i} className="hover:bg-gray-50">
+              {editingId === row.id ? (
+                <>
+                  {columns.map(k => (
+                    <td key={k} className="px-2 py-2">
+                      {k === 'Дата отправки' ? (
+                        <span className="text-sm text-gray-500">{row[k]}</span>
+                      ) : (
+                        <input type="text" value={editValues[k] ?? ''} onChange={e => setEditValues({...editValues, [k]: e.target.value})}
+                          className="w-full px-2 py-1 border rounded text-sm min-w-[80px]" />
+                      )}
+                    </td>
+                  ))}
+                  <td className="px-2 py-2 text-center whitespace-nowrap">
+                    <button onClick={saveEdit} disabled={saving} className="text-green-600 hover:text-green-800 text-sm font-medium mr-2">{saving ? '...' : '✓'}</button>
+                    <button onClick={() => setEditingId(null)} className="text-gray-500 hover:text-gray-700 text-sm">✗</button>
+                  </td>
+                </>
+              ) : (
+                <>
+                  {columns.map(k => <td key={k} className="px-4 py-3 text-sm whitespace-nowrap">{row[k]}</td>)}
+                  <td className="px-2 py-3 text-center whitespace-nowrap">
+                    <button onClick={() => startEdit(row)} className="text-blue-600 hover:text-blue-800 text-xs font-medium mr-2">✎</button>
+                    <button onClick={() => deleteRecord(row.id)} className="text-red-500 hover:text-red-700 text-xs font-medium">✕</button>
+                  </td>
+                </>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
 // ==================== MAIN CRM ====================
 
 const BarberCRM = ({ branch, token, onLogout }) => {
@@ -766,38 +922,7 @@ const MorningEventsPage = ({ branch, showToast }) => {
           </div>
         </form>
       ) : (
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Дата</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Неделя</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Тип</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Участники</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Эффективность</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Комментарий</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {history.map((item, i) => (
-                  <tr key={i} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Дата']}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Неделя']}</td>
-                    <td className="px-6 py-4 text-sm">{item['Тип мероприятия']}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Участники']}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                        {item['Эффективность']}/5
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-600">{item['Комментарий']}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <EditableTable data={history} section="morning-events" onRefresh={loadHistory} />
       )}
     </div>
   );
@@ -886,60 +1011,7 @@ const FieldVisitsPage = ({ branch, showToast }) => {
           </div>
         </form>
       ) : (
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <table className="w-full">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Дата</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Мастер</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Стрижки</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Сервис</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Доп услуги</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Косметика</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Стандарты</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Общая оценка</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {history.map((item, i) => {
-                // Вычисляем общую оценку, если она отсутствует в данных
-                let avgRating = item['Общая оценка'];
-                if (!avgRating || avgRating === '' || isNaN(avgRating)) {
-                  // Пересчитываем из имеющихся оценок
-                  const ratings = [
-                    parseFloat(item['Качество стрижки']) || 0,
-                    parseFloat(item['Качество обслуживания']) || 0,
-                    parseFloat(item['Доп. услуги (оценка)']) || 0,
-                    parseFloat(item['Косметика (оценка)']) || 0,
-                    parseFloat(item['Стандарты (оценка)']) || 0
-                  ];
-                  avgRating = (ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(1);
-                }
-                
-                return (
-                  <tr key={i} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Дата']}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{item['Имя мастера']}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Качество стрижки']}/10</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Качество обслуживания']}/10</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Доп. услуги (оценка)']}/10</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Косметика (оценка)']}/10</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Стандарты (оценка)']}/10</td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                        parseFloat(avgRating) >= 8 ? 'bg-green-100 text-green-800' : 
-                        parseFloat(avgRating) >= 6 ? 'bg-yellow-100 text-yellow-800' : 
-                        'bg-red-100 text-red-800'
-                      }`}>
-                        {avgRating}/10
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <EditableTable data={history} section="field-visits" onRefresh={loadHistory} />
       )}
     </div>
   );
@@ -1014,34 +1086,7 @@ const OneOnOnePage = ({ branch, showToast }) => {
           </div>
         </form>
       ) : (
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-          <table className="w-full">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Дата</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Мастер</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Цель</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Результаты</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">План развития</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Показатель</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">След. встреча</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {history.map((item, i) => (
-                <tr key={i} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Дата']}</td>
-                  <td className="px-6 py-4 text-sm font-medium">{item['Имя мастера']}</td>
-                  <td className="px-6 py-4 text-sm">{item['Цель']}</td>
-                  <td className="px-6 py-4 text-sm">{item['Результаты']}</td>
-                  <td className="px-6 py-4 text-sm">{item['План развития']}</td>
-                  <td className="px-6 py-4 text-sm">{item['Показатель']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Дата след. встречи'] || '-'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <EditableTable data={history} section="one-on-one" onRefresh={loadHistory} />
       )}
     </div>
   );
@@ -1102,72 +1147,7 @@ const WeeklyMetricsPage = ({ branch, showToast }) => {
         <button type="submit" disabled={loading} className="mt-4 px-8 py-3 bg-blue-600 text-white rounded-lg">{loading ? 'Сохранение...' : 'Сохранить'}</button>
       </form>
 
-      <div className="bg-white rounded-xl shadow-sm overflow-x-auto">
-        <table className="w-full">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Дата отправки</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Период</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Ср. чек (план)</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Ср. чек (факт)</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Ср. чек %</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Косметика (план)</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Косметика (факт)</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Косметика %</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Доп. услуги (план)</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Доп. услуги (факт)</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Доп. услуги %</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {history.map((item, i) => {
-              const avgCheckPercent = calcPerformance(item['Средний чек (факт)'], item['Средний чек (план)']);
-              const cosmeticsPercent = calcPerformance(item['Косметика (факт)'], item['Косметика (план)']);
-              const servicesPercent = calcPerformance(item['Доп. услуги (факт)'], item['Доп. услуги (план)']);
-              
-              return (
-                <tr key={i} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item['Дата отправки']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{item['Период']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Средний чек (план)']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Средний чек (факт)']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                      parseFloat(avgCheckPercent) >= 100 ? 'bg-green-100 text-green-800' : 
-                      parseFloat(avgCheckPercent) >= 75 ? 'bg-yellow-100 text-yellow-800' : 
-                      'bg-red-100 text-red-800'
-                    }`}>
-                      {avgCheckPercent}%
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Косметика (план)']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Косметика (факт)']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                      parseFloat(cosmeticsPercent) >= 100 ? 'bg-green-100 text-green-800' : 
-                      parseFloat(cosmeticsPercent) >= 75 ? 'bg-yellow-100 text-yellow-800' : 
-                      'bg-red-100 text-red-800'
-                    }`}>
-                      {cosmeticsPercent}%
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Доп. услуги (план)']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Доп. услуги (факт)']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                      parseFloat(servicesPercent) >= 100 ? 'bg-green-100 text-green-800' : 
-                      parseFloat(servicesPercent) >= 75 ? 'bg-yellow-100 text-yellow-800' : 
-                      'bg-red-100 text-red-800'
-                    }`}>
-                      {servicesPercent}%
-                    </span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <EditableTable data={history} section="weekly-metrics" onRefresh={loadHistory} />
     </div>
   );
 };
@@ -1247,48 +1227,7 @@ const NewbieAdaptationPage = ({ branch, showToast }) => {
         </div>
       </form>
       ) : (
-        <div className="bg-white rounded-xl shadow-sm overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Дата отправки</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Дата начала</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Имя</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Практика стрижки</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Стандарты обслуживания</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Гигиена/санитария</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Доп. услуги</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Продажи косметики</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Основы iClient</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Статус</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {history.map((item, i) => (
-                <tr key={i} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item['Дата отправки']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Дата начала']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{item['Имя']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Практика стрижки']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Стандарты обслуживания']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Гигиена/санитария']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Доп. услуги']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Продажи косметики']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Основы iClient']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                      item['Статус'] === 'Завершена' ? 'bg-green-100 text-green-800' : 
-                      item['Статус'] === 'В процессе' ? 'bg-blue-100 text-blue-800' : 
-                      'bg-yellow-100 text-yellow-800'
-                    }`}>
-                      {item['Статус']}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <EditableTable data={history} section="newbie-adaptation" onRefresh={loadHistory} />
       )}
     </div>
   );
@@ -1362,42 +1301,7 @@ const MasterPlansPage = ({ branch, showToast }) => {
         </div>
       </form>
 
-      <div className="bg-white rounded-xl shadow-sm overflow-x-auto">
-        <table className="w-full">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Дата отправки</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Месяц</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Мастер</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Ср. чек (план)</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Ср. чек (факт)</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Доп. услуги (план)</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Доп. услуги (факт)</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Продажи (план)</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">Продажи (факт)</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">ЗП (план)</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase whitespace-nowrap">ЗП (факт)</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {history.map((item, i) => (
-              <tr key={i} className="hover:bg-gray-50">
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item['Дата отправки']}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{item['Месяц']}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Имя мастера']}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Средний чек (план)']}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Средний чек (факт)']}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Доп. услуги (план)']}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Доп. услуги (факт)']}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Продажи (план)']}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Продажи (факт)']}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['ЗП (план)']}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm">{item['ЗП (факт)']}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <EditableTable data={history} section="master-plans" onRefresh={loadHistory} />
     </div>
   );
 };
@@ -1468,45 +1372,7 @@ const ReviewsPage = ({ branch, showToast }) => {
         </div>
       )}
 
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Дата отправки</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Неделя</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Управляющий</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">План</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Факт</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Выполнение %</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {history.map((item, i) => {
-              const plan = item['План'] || 13;
-              const fact = item['Факт'] || 0;
-              const percentage = Math.round((fact / plan) * 100);
-              return (
-                <tr key={i} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item['Дата отправки']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Неделя']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">{item['Имя руководителя']}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{plan}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{fact}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                      percentage >= 100 ? 'bg-green-100 text-green-800' : 
-                      percentage >= 75 ? 'bg-yellow-100 text-yellow-800' : 
-                      'bg-red-100 text-red-800'
-                    }`}>
-                      {percentage}%
-                    </span>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <EditableTable data={history} section="reviews" onRefresh={loadHistory} />
     </div>
   );
 };
